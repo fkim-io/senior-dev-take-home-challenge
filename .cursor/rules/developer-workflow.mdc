@@ -1,0 +1,370 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Developer Workflow for Guideline Ingestion API
+
+## Overview
+This workflow ensures systematic, high-quality implementation of tasks from `DELIVERABLES.md` while maintaining consistency with project rules and TDD practices.
+
+## Core Workflow Principles
+- **Test-Driven Development**: Red → Green → Refactor cycle for all features
+- **Incremental Progress**: One task at a time with clear acceptance criteria
+- **Rule Consistency**: Review and update project rules when making architectural changes
+- **Documentation**: Keep implementation decisions and trade-offs documented
+
+---
+
+## 1. Task Selection & Branch Creation
+
+### Step 1.1: Select Next Task
+```bash
+# Review DELIVERABLES.md and identify next unchecked task
+# Example: TASK-008: Django Project Setup (TDD)
+```
+
+### Step 1.2: Create Feature Branch
+```bash
+# Branch naming convention: feature/task-XXX-brief-description
+git checkout -b feature/task-008-django-setup-tdd
+
+# For bug fixes or rule updates:
+git checkout -b fix/task-XXX-specific-issue
+git checkout -b chore/update-rules-after-task-XXX
+```
+
+### Step 1.3: Update Task Status
+```markdown
+# In DELIVERABLES.md, mark task as in progress
+**TASK-008: Django Project Setup (TDD)** ⚠️ IN PROGRESS
+```
+
+---
+
+## 2. Task Analysis & Planning
+
+### Step 2.1: Review Task Requirements
+```markdown
+# For each task, analyze:
+□ What are the specific deliverables?
+□ What are the acceptance criteria?
+□ What dependencies exist (previous tasks)?
+□ What tests need to be written first (TDD)?
+□ What files will be created/modified?
+```
+
+### Step 2.2: Review Existing Codebase
+```bash
+# Before implementing, understand current state:
+□ Review related files and their current implementation
+□ Check existing tests for similar functionality
+□ Identify patterns to follow or extend
+□ Look for potential conflicts or integration points
+```
+
+### Step 2.3: Review Applicable Rules
+```markdown
+# Check which Cursor rules apply to this task:
+□ core-architecture.mdc (always applies)
+□ tdd-workflow.mdc (if working with tests)
+□ django-api.mdc (if working with API endpoints)
+□ openai-integration.mdc (if working with GPT features)
+□ docker-deployment.mdc (if working with deployment)
+□ conventional-commits.mdc (for commit messages)
+```
+
+### Step 2.4: Create Implementation Plan
+```markdown
+# Document your approach in a comment or commit message:
+## Implementation Plan for TASK-008
+
+### Files to Create/Modify:
+- config/settings.py
+- jobs/models.py  
+- jobs/tests/test_models.py
+- requirements.txt
+
+### TDD Approach (Docker Environment):
+1. Ensure Docker services are running: `docker compose up -d`
+2. Write failing tests for Django configuration
+3. Implement basic Django setup
+4. Write failing tests for Job model
+5. Implement Job model
+6. Run tests in container: `docker compose exec app pytest`
+7. Refactor for clean code
+
+### Acceptance Criteria:
+□ Django project starts without errors in container
+□ Database connection to PostgreSQL container configured
+□ Basic tests pass in containerized environment
+□ Django admin accessible at http://localhost:8000/admin/
+□ All setup tests pass per task requirements
+```
+
+---
+
+## 3. TDD Implementation Cycle
+
+### Step 3.1: Red Phase - Write Failing Tests
+```python
+# Example commit pattern:
+# test(django): add failing test for project configuration
+# 
+# Tests Django setup, database connection, and basic functionality.
+# Implementation to follow in next commits.
+
+def test_django_configuration():
+    """Test Django project is properly configured."""
+    # This test should fail initially
+    assert settings.DEBUG is not None
+    assert settings.DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql'
+```
+
+### Step 3.2: Green Phase - Make Tests Pass
+```python
+# Example commit pattern:
+# feat(django): implement basic Django project configuration
+# 
+# Makes test_django_configuration pass.
+# Configures PostgreSQL database and basic settings.
+
+# Implement minimal code to make tests pass
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME', 'guideline_ingestion'),
+        # ... rest of configuration
+    }
+}
+```
+
+### Step 3.3: Refactor Phase - Improve Code Quality
+```python
+# Example commit pattern:
+# refactor(django): extract database configuration to separate module
+# 
+# No functional changes. Improves code organization.
+# All tests continue to pass.
+
+# Clean up code while maintaining functionality
+```
+
+---
+
+## 4. Integration & Validation
+
+### Step 4.1: Run Full Test Suite
+```bash
+# Ensure your changes don't break existing functionality (in Docker)
+docker compose exec app pytest
+docker compose exec app coverage report
+
+# Verify coverage stays above 70%
+# Fix any broken tests from other modules
+# All tests run in containerized environment for consistency
+```
+
+### Step 4.2: Test Integration Points
+```bash
+# Ensure Docker environment is running:
+docker compose up -d
+
+# For API changes, test endpoints manually:
+curl -X POST http://localhost:8000/jobs/ -d '{"guidelines": "test"}'
+
+# For database changes, test migrations in container:
+docker compose exec app python manage.py makemigrations --check
+docker compose exec app python manage.py migrate
+
+# For Celery changes, check worker logs:
+docker compose logs celery
+
+# For Redis integration, check queue status:
+docker compose exec redis redis-cli ping
+```
+
+### Step 4.3: Review Task Acceptance Criteria
+```markdown
+# Go back to DELIVERABLES.md and verify:
+□ All bullet points under the task are completed
+□ All tests mentioned in the task are passing
+□ Integration with other components works
+□ Performance requirements are met (if applicable)
+```
+
+---
+
+## 5. Rule Impact Assessment
+
+### Step 5.1: Identify Potential Rule Updates
+```markdown
+# After implementing significant changes, assess if rules need updates:
+
+□ Did I add new architectural patterns that should be documented?
+□ Did I establish new coding conventions that others should follow?
+□ Did I change the project structure in ways that affect the rules?
+□ Did I add new dependencies that should be mentioned in tech stack?
+□ Did I create new testing patterns that should be standardized?
+```
+
+### Step 5.2: Update Affected Rules
+```bash
+# If rules need updates, create a separate commit:
+git add .cursor/rules/core-architecture.mdc
+git commit -m "chore(rules): update tech stack after Django 5.1 upgrade
+
+Reflects new Django 5.1 features used in TASK-008.
+Updates project structure to match implemented patterns."
+```
+
+### Common Rule Update Scenarios:
+- **core-architecture.mdc**: New dependencies, architectural patterns, performance optimizations
+- **django-api.mdc**: New API patterns, serializer conventions, error handling approaches
+- **docker-deployment.mdc**: Infrastructure changes, service configurations, deployment optimizations
+- **tdd-workflow.mdc**: New testing patterns, fixture approaches, mock strategies
+
+---
+
+## 6. Documentation & Completion
+
+### Step 6.1: Update Documentation
+```markdown
+# Update relevant documentation:
+□ Add inline code comments for complex logic
+□ Update docstrings for new functions/classes
+□ Add API documentation if endpoints changed
+□ Update README if setup process changed
+```
+
+### Step 6.2: Final Code Review
+```bash
+# Self-review checklist:
+□ Code follows PEP 8 and project conventions
+□ All functions have type hints
+□ Error handling is appropriate
+□ Security best practices are followed
+□ Performance requirements are met
+```
+
+### Step 6.3: Complete Task
+```markdown
+# In DELIVERABLES.md:
+**TASK-008: Django Project Setup (TDD)** ✅ COMPLETED
+
+# Commit final changes:
+git add dev-docs/DELIVERABLES.md
+git commit -m "docs: mark TASK-008 as completed
+
+All acceptance criteria met:
+- Django project configured and tested
+- Database connection established
+- Test coverage maintained above 70%"
+```
+
+---
+
+## 7. Branch Merging & Cleanup
+
+### Step 7.1: Prepare for Merge
+```bash
+# Ensure branch is ready:
+git rebase main  # or merge main if preferred
+pytest  # final test run
+git push origin feature/task-008-django-setup-tdd
+```
+
+### Step 7.2: Create Pull Request (if using)
+```markdown
+# PR Template:
+## Task: TASK-008 Django Project Setup (TDD)
+
+### Changes Made:
+- Configured Django 5.1 with PostgreSQL 15
+- Implemented Job model with required fields
+- Added comprehensive test coverage
+- Updated project rules for new patterns
+
+### Acceptance Criteria Met:
+- [x] Django project starts without errors
+- [x] Database connection configured
+- [x] Test coverage above 70%
+- [x] All task requirements fulfilled
+
+### Rule Updates:
+- Updated core-architecture.mdc to reflect Django 5.1 usage
+- No breaking changes to existing patterns
+```
+
+### Step 7.3: Post-Merge Cleanup
+```bash
+# After successful merge:
+git checkout main
+git pull origin main
+git branch -d feature/task-008-django-setup-tdd
+
+# Update task board or project tracking
+```
+
+---
+
+## 8. Continuous Improvement
+
+### Step 8.1: Rule Maintenance Schedule
+```markdown
+# Regularly review rules for accuracy:
+□ After every 3-4 tasks, review all rules for updates
+□ Before starting new phases, ensure rules are current
+□ When onboarding new team members, validate rule clarity
+□ When adding new dependencies, update version requirements
+```
+
+---
+
+## Emergency Procedures
+
+### Blocked by Dependencies
+```bash
+# If a task is blocked by incomplete previous tasks:
+1. Document the blocker in DELIVERABLES.md
+2. Switch to a non-dependent task
+3. Create temporary mocks/stubs if needed
+4. Return to blocked task when dependencies are ready
+```
+
+### Breaking Changes Required
+```bash
+# If implementation requires breaking existing functionality:
+1. Document the necessity in commit message
+2. Update all affected tests
+3. Update rules to reflect new patterns
+4. Consider migration strategy for existing data
+5. Use conventional commit breaking change format
+```
+
+### Rule Conflicts Discovered
+```bash
+# If existing rules conflict with requirements:
+1. Prioritize DELIVERABLES.md requirements
+2. Update conflicting rules immediately
+3. Document the change reasoning
+4. Ensure team is notified of rule changes
+```
+
+---
+
+## Success Metrics
+
+### Per Task:
+- [ ] All acceptance criteria met
+- [ ] Test coverage maintained/improved
+- [ ] No regression in existing functionality
+- [ ] Code quality standards maintained
+- [ ] Rules updated if architectural changes made
+
+### Per Phase:
+- [ ] All phase tasks completed
+- [ ] Integration between tasks works seamlessly
+- [ ] Performance requirements met
+- [ ] Documentation is current and accurate
+- [ ] Rules reflect actual implemented patterns

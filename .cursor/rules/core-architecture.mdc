@@ -1,0 +1,66 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Core Architecture & Project Constraints
+
+## Tech Stack Requirements
+- **Backend**: Python 3.12+ with Django 5.1+ and Django REST Framework 3.15+
+- **Task Queue**: Celery 5.4+ with Redis 7.2+ as broker and result backend
+- **Database**: PostgreSQL 15+ for persistence with psycopg 3.2+ adapter
+- **AI Integration**: OpenAI Python SDK 1.57+ for two-step GPT chain processing
+- **Deployment**: Docker Compose for single-command bootstrap
+- **Testing**: pytest 8.3+ with pytest-django for 70%+ coverage requirement
+
+**Version Strategy**: These versions ensure compatibility with modern security standards, performance optimizations, and active LTS support. PostgreSQL 15+ provides advanced JSONB features, Django 5.1+ offers improved async support, and Python 3.12+ delivers significant performance improvements over 3.11.
+
+## Performance Requirements
+- **POST /jobs** endpoint MUST respond in <200ms
+- Support concurrent job processing
+- Efficient database queries with proper indexing
+- Resource-conscious memory usage
+
+## Security Standards
+- Never commit `.env` files or API keys
+- Input validation and sanitization for all endpoints
+- Proper error handling without exposing internals
+- Use Django security best practices
+
+## Project Structure Conventions
+```
+guideline_ingestion/          # Django project root
+├── jobs/                     # Main application
+│   ├── models.py            # Job model with event_id, status, etc.
+│   ├── serializers.py       # DRF serializers
+│   ├── views.py             # API endpoints
+│   ├── tasks.py             # Celery tasks
+│   └── tests/               # Test modules
+├── config/                   # Django settings
+├── requirements.txt         # Pinned dependencies (Django 5.1+, Celery 5.4+, etc.)
+├── docker-compose.yml       # Multi-service setup (Redis 7.2+, PostgreSQL 15+)
+├── Dockerfile              # Django app container (Python 3.12+ base)
+└── README.md               # ≤300 words documentation
+```
+
+## API Design Principles
+- RESTful endpoints with proper HTTP status codes
+- Consistent JSON response format
+- OpenAPI 3.0 auto-generated documentation
+- Error responses with meaningful messages
+- Request/response validation using DRF serializers
+
+## Database Design Standards
+- Use UUIDs for event_id to avoid collisions
+- Job status flow: PENDING → PROCESSING → COMPLETED/FAILED
+- Atomic operations for status updates
+- Proper indexing for performance queries with PostgreSQL 15+ advanced indexing
+- JSON fields for storing GPT results using PostgreSQL native JSONB
+- Connection pooling with psycopg 3.2+ for optimal performance
+
+## Code Quality Standards
+- Follow PEP 8 with black formatting
+- Type hints for all functions
+- Comprehensive docstrings
+- Meaningful variable and function names
+- DRY principle with reusable utilities

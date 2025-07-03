@@ -1,0 +1,278 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Docker Deployment Standards
+
+## Single-Command Bootstrap Requirement
+The entire application MUST start with: `docker compose up --build`
+
+## Version Requirements
+- **Base Images**: Python 3.12-slim, PostgreSQL 15+, Redis 7.2+
+- **Strategy**: Use official images with explicit version tags for reproducible builds
+- **Compatibility**: Aligned with core architecture requirements for optimal performance
+
+## Service Architecture
+```yaml
+# docker-compose.yml structure
+services:
+  app:          # Django application
+  redis:        # Celery broker & result backend
+  postgres:     # Primary database
+  celery:       # Background worker
+```
+
+## Django Application Container
+
+### Dockerfile Pattern
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Expose port
+EXPOSE 8000
+
+# Run migrations and start server
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+```
+
+### Multi-Stage Build (Optional Optimization)
+```dockerfile
+# Build stage
+FROM python:3.12-slim as builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --user -r requirements.txt
+
+# Runtime stage
+FROM python:3.12-slim
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+COPY . .
+ENV PATH=/root/.local/bin:$PATH
+EXPOSE 8000
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+```
+
+## Docker Compose Configuration
+
+### Complete Service Setup
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15  # PostgreSQL 15+ for advanced JSONB features
+    environment:
+      POSTGRES_DB: guideline_ingestion
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine  # Redis 7.2+ for Celery broker/backend
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .  # Uses Python 3.12-slim base image
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  celery:
+    build: .  # Uses Python 3.12-slim base image
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: celery -A config worker --loglevel=info
+
+volumes:
+  postgres_data:
+```
+
+## Environment Configuration
+
+### .env Template
+```env
+# Database
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Django
+DEBUG=True
+SECRET_KEY=your_secret_key_here
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+
+# Celery
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+```
+
+### .dockerignore
+```
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+.env
+.nyc_output
+coverage
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.DS_Store
+.idea/
+.vscode/
+dev-docs/
+```
+
+## Health Checks & Monitoring
+
+### Application Health Check
+```python
+# Add to Django urls.py
+from django.http import JsonResponse
+from django.db import connections
+
+def health_check(request):
+    """Health check endpoint for container orchestration."""
+    try:
+        # Check database connection
+        db_conn = connections['default']
+        db_conn.cursor()
+        
+        return JsonResponse({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': timezone.now().isoformat()
+        })
+    except Exception as e:
+        return JsonResponse({
+            'status': 'unhealthy',
+            'error': str(e)
+        }, status=503)
+```
+
+## Development vs Production
+
+### Development Override
+```yaml
+# docker-compose.override.yml (for development)
+version: '3.8'
+
+services:
+  app:
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=True
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  celery:
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=True
+```
+
+## Container Optimization
+
+### Image Size Optimization
+- Use slim base images
+- Multi-stage builds for dependencies
+- Remove unnecessary packages after installation
+- Use .dockerignore to exclude development files
+
+### Performance Considerations
+- Configure proper resource limits
+- Use health checks for service dependencies
+- Implement graceful shutdown handling
+- Configure proper logging drivers
+
+## Deployment Verification
+
+### Startup Sequence Validation
+1. PostgreSQL starts and accepts connections
+2. Redis starts and responds to ping
+3. Django app runs migrations successfully
+4. Django app starts and serves requests
+5. Celery worker connects to broker
+6. All services healthy and responsive
+
+### Required Endpoints After Startup
+- `GET /health/` - Health check (200 OK)
+- `POST /jobs/` - Job creation (<200ms)
+- `GET /jobs/{event_id}/` - Job status retrieval

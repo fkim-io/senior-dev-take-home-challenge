@@ -1,0 +1,124 @@
+# Django REST Framework Patterns
+
+## API Endpoint Requirements
+
+### POST /jobs Endpoint
+```python
+# Expected behavior:
+# 1. Accept guidelines data in request body
+# 2. Generate unique event_id (UUID)
+# 3. Create Job record with PENDING status
+# 4. Queue Celery task asynchronously
+# 5. Return event_id in <200ms
+# 6. Handle validation errors gracefully
+
+class JobCreateView(APIView):
+    def post(self, request):
+        # Implementation must be <200ms
+        pass
+```
+
+### GET /jobs/{event_id} Endpoint
+```python
+# Expected behavior:
+# 1. Validate event_id format (UUID)
+# 2. Return job status and results if available
+# 3. Handle not found cases gracefully
+# 4. Support different status responses
+
+class JobRetrieveView(APIView):
+    def get(self, request, event_id):
+        # Return status and results
+        pass
+```
+
+## Model Design Patterns
+
+### Job Model Requirements
+```python
+class Job(models.Model):
+    event_id = models.UUIDField(unique=True, default=uuid.uuid4)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    input_data = models.JSONField()  # Original guidelines
+    result = models.JSONField(null=True, blank=True)  # GPT outputs
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['event_id']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+```
+
+## Serializer Patterns
+
+### Request/Response Serializers
+```python
+class JobCreateSerializer(serializers.Serializer):
+    guidelines = serializers.CharField(max_length=10000, required=True)
+    metadata = serializers.JSONField(required=False)
+    
+    def validate_guidelines(self, value):
+        # Validate guidelines content
+        if len(value.strip()) < 10:
+            raise serializers.ValidationError("Guidelines too short")
+        return value
+
+class JobResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Job
+        fields = ['event_id', 'status', 'result', 'created_at']
+```
+
+## Error Handling Standards
+
+### Consistent Error Responses
+```python
+# Standard error format:
+{
+    "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Invalid input data",
+        "details": {"field": ["error message"]}
+    }
+}
+
+# Status codes:
+# 200: Success
+# 201: Created
+# 400: Bad Request (validation errors)
+# 404: Not Found
+# 422: Unprocessable Entity
+# 500: Internal Server Error
+```
+
+## Performance Optimizations
+
+### Database Query Optimization
+- Use `select_related()` and `prefetch_related()` for relationships
+- Index frequently queried fields (event_id, status)
+- Use `bulk_create()` for multiple records
+- Implement database connection pooling
+
+### Response Time Optimization
+- Minimize database queries in endpoints
+- Use asynchronous task queuing immediately
+- Implement proper caching strategies
+- Use database transactions judiciously
+
+## DRF Best Practices
+- Use class-based views for consistency
+- Implement proper permissions and authentication (if required)
+- Use DRF serializers for validation
+- Leverage DRF's built-in pagination
+- Use viewsets for CRUD operations when appropriate
+- Implement proper logging for debugging
+
+## URL Patterns
+```python
+urlpatterns = [
+    path('jobs/', JobCreateView.as_view(), name='job-create'),
+    path('jobs/<uuid:event_id>/', JobRetrieveView.as_view(), name='job-detail'),
+]
+```
