@@ -1,0 +1,109 @@
+graph LR
+    subgraph "Client Layer"
+        ClientApp["Client Application"]
+        Browser["Web Browser"]
+        APITool["API Testing Tool"]
+    end
+    
+    subgraph "API Layer"
+        LoadBalancer["Load Balancer"]
+        Django1["Django Instance 1"]
+        Django2["Django Instance 2"]
+        DjangoN["Django Instance N"]
+    end
+    
+    subgraph "Application Services"
+        JobService["Job Service"]
+        ValidationService["Validation Service"]
+        SerializerService["Serializer Service"]
+        AuthService["Authentication Service"]
+    end
+    
+    subgraph "Queue & Cache Layer"
+        RedisCluster["Redis Cluster"]
+        CeleryBroker["Celery Broker"]
+        ResultBackend["Result Backend"]
+    end
+    
+    subgraph "Worker Layer"
+        WorkerPool["Celery Worker Pool"]
+        GPTProcessor["GPT Processing Service"]
+        ErrorHandler["Error Handler"]
+        RetryManager["Retry Manager"]
+    end
+    
+    subgraph "Data Layer"
+        PostgreSQLPrimary["PostgreSQL Primary"]
+        PostgreSQLReplica["PostgreSQL Read Replica"]
+        Migrations["Database Migrations"]
+    end
+    
+    subgraph "External Services"
+        OpenAIAPI["OpenAI API"]
+        MonitoringService["Monitoring Service"]
+        LoggingService["Logging Service"]
+    end
+    
+    %% Client to API Layer
+    ClientApp --> LoadBalancer
+    Browser --> LoadBalancer
+    APITool --> LoadBalancer
+    
+    %% Load Balancer to Django Instances
+    LoadBalancer --> Django1
+    LoadBalancer --> Django2
+    LoadBalancer --> DjangoN
+    
+    %% Django to Application Services
+    Django1 --> JobService
+    Django1 --> ValidationService
+    Django1 --> SerializerService
+    Django1 --> AuthService
+    
+    %% Application Services to Queue/Cache
+    JobService --> CeleryBroker
+    JobService --> ResultBackend
+    ValidationService --> RedisCluster
+    
+    %% Application Services to Database
+    JobService --> PostgreSQLPrimary
+    SerializerService --> PostgreSQLReplica
+    AuthService --> PostgreSQLPrimary
+    
+    %% Queue to Workers
+    CeleryBroker --> WorkerPool
+    WorkerPool --> GPTProcessor
+    WorkerPool --> ErrorHandler
+    WorkerPool --> RetryManager
+    
+    %% Workers to External Services
+    GPTProcessor --> OpenAIAPI
+    WorkerPool --> PostgreSQLPrimary
+    ErrorHandler --> LoggingService
+    
+    %% Workers to Result Backend
+    WorkerPool --> ResultBackend
+    GPTProcessor --> ResultBackend
+    
+    %% Monitoring Connections
+    Django1 --> MonitoringService
+    WorkerPool --> MonitoringService
+    PostgreSQLPrimary --> MonitoringService
+    RedisCluster --> MonitoringService
+    
+    %% Styling
+    classDef clientLayer fill:#e3f2fd
+    classDef apiLayer fill:#fff3e0
+    classDef serviceLayer fill:#f3e5f5
+    classDef queueLayer fill:#e8f5e8
+    classDef workerLayer fill:#fff8e1
+    classDef dataLayer fill:#e1f5fe
+    classDef externalLayer fill:#ffebee
+    
+    class ClientApp,Browser,APITool clientLayer
+    class LoadBalancer,Django1,Django2,DjangoN apiLayer
+    class JobService,ValidationService,SerializerService,AuthService serviceLayer
+    class RedisCluster,CeleryBroker,ResultBackend queueLayer
+    class WorkerPool,GPTProcessor,ErrorHandler,RetryManager workerLayer
+    class PostgreSQLPrimary,PostgreSQLReplica,Migrations dataLayer
+    class OpenAIAPI,MonitoringService,LoggingService externalLayer 
