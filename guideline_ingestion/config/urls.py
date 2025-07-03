@@ -79,5 +79,5 @@ urlpatterns = [
     path('health/ready/', readiness_check, name='readiness'),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('jobs/', include('jobs.urls')),
+    path('jobs/', include('guideline_ingestion.jobs.urls')),
 ]

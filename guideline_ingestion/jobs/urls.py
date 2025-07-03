@@ -1,15 +1,20 @@
 """
 URL patterns for jobs API.
 
-This module will be fully implemented in TASK-010: API Endpoints Implementation (TDD).
-Contains placeholder for job API URLs based on api-design.md.
+This module contains URL routing for job creation and retrieval endpoints
+with proper UUID validation and namespacing.
 """
 
 from django.urls import path
 
+from guideline_ingestion.jobs.views import JobCreateView, JobRetrieveView
 
-# Placeholder for job URLs - to be implemented in TASK-010
+app_name = 'jobs'
+
 urlpatterns = [
     # POST /jobs/ - Job submission endpoint
-    # GET /jobs/{event_id}/ - Job status endpoint
+    path('', JobCreateView.as_view(), name='job-create'),
+    
+    # GET /jobs/{event_id}/ - Job status and result retrieval endpoint
+    path('<uuid:event_id>/', JobRetrieveView.as_view(), name='job-retrieve'),
 ]
