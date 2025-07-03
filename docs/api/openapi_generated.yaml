@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: Guideline Ingestion API
+  version: 1.0.0
+  description: |-
+    REST API for asynchronous guideline processing with GPT-powered summarization and checklist generation.
+
+    ## Key Features
+    - Sub-200ms job submission endpoint
+    - Real-time job status tracking
+    - Two-step GPT processing chain: summarize → generate checklist
+    - Comprehensive error handling and validation
+
+    ## Performance
+    - POST /jobs: <200ms response time (95th percentile)
+    - GET /jobs/{event_id}: <100ms response time (95th percentile)
+    - Concurrent job processing with horizontal scaling
+
+    ## Authentication
+    Currently no authentication required for development.
+    Production deployment will include API key authentication.
+  contact:
+    name: API Support
+    email: support@guideline-ingestion.com
+    url: https://guideline-ingestion.com/support
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+paths:
+  /health/:
+    get:
+      operationId: health_check
+      description: Check the health status of the application and its dependencies.
+        Used by container orchestration systems to determine if the service is healthy.
+      summary: Health check endpoint
+      tags:
+      - Health
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: Service is healthy
+        '503':
+          description: Service is unhealthy
+  /health/ready/:
+    get:
+      operationId: readiness_check
+      description: Check if the application is ready to handle requests. Used by container
+        orchestration systems to determine when to start routing traffic.
+      summary: Readiness check endpoint
+      tags:
+      - Health
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+  /jobs/:
+    post:
+      operationId: jobs_create
+      description: 'Submit guidelines for processing through the GPT chain. The job
+        will be queued for asynchronous processing and return an event_id for tracking.
+        **Performance requirement**: <200ms response time (95th percentile).'
+      summary: Create new job for guideline processing
+      tags:
+      - Jobs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+            examples:
+              BasicJobSubmission:
+                value:
+                  guidelines: Patient care guidelines for emergency room triage procedures.
+                    Patients with chest pain should be immediately assessed for cardiac
+                    symptoms.
+                summary: Basic Job Submission
+              JobWithCallbackAndMetadata:
+                value:
+                  guidelines: Healthcare protocol for medication administration. All
+                    medications must be double-checked before administration.
+                  callback_url: https://example.com/webhooks/job-completed
+                  priority: high
+                  metadata:
+                    department: cardiology
+                    version: '2.1'
+                    requester: dr.smith@hospital.com
+                summary: Job with Callback and Metadata
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '201':
+          description: Job created successfully
+        '400':
+          description: Validation error
+        '429':
+          description: Rate limit exceeded
+        '500':
+          description: Internal server error
+  /jobs/{event_id}/:
+    get:
+      operationId: jobs_retrieve
+      description: 'Retrieve the current status and results of a job by its event_id.
+        Response fields vary based on job status (PENDING, PROCESSING, COMPLETED,
+        FAILED). **Performance requirement**: <100ms response time (95th percentile).'
+      summary: Retrieve job status and results
+      parameters:
+      - in: path
+        name: event_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Jobs
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: Job retrieved successfully
+        '400':
+          description: Invalid event_id format
+        '404':
+          description: Job not found
+        '500':
+          description: Internal server error
+components:
+  schemas:
+    JobCreateRequest:
+      type: object
+      description: |-
+        Serializer for job creation requests with comprehensive validation.
+
+        Handles guideline submission for asynchronous processing through the GPT chain.
+        Validates input constraints and prepares data for job creation.
+      properties:
+        guidelines:
+          type: string
+          minLength: 10
+          description: 'Guideline text content to be processed through the GPT chain.
+            Must be between 10-10,000 characters. Supports plain text format. Examples:
+            medical protocols, safety procedures, compliance guidelines.'
+          maxLength: 10000
+        callback_url:
+          type: string
+          format: uri
+          description: Optional HTTPS callback URL for job completion notification.
+            Must use HTTPS protocol for security. Will receive POST request with job
+            results when processing completes.
+        priority:
+          allOf:
+          - $ref: '#/components/schemas/PriorityEnum'
+          default: normal
+          description: |-
+            Processing priority level. High priority jobs are processed first, normal is default, low priority jobs are processed when resources are available.
+
+            * `low` - low
+            * `normal` - normal
+            * `high` - high
+        metadata:
+          description: 'Optional metadata as key-value pairs for client tracking.
+            Maximum 10 keys, total size limit 1KB. Common uses: department, version,
+            requester_id, tags.'
+      required:
+      - guidelines
+    PriorityEnum:
+      enum:
+      - low
+      - normal
+      - high
+      type: string
+      description: |-
+        * `low` - low
+        * `normal` - normal
+        * `high` - high
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+servers:
+- url: http://localhost:8000
+  description: Local development server
+- url: https://staging-api.guideline-ingestion.com
+  description: Staging server
+- url: https://api.guideline-ingestion.com
+  description: Production server
