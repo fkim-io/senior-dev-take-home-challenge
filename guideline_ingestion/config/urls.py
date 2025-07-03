@@ -20,9 +20,52 @@ from django.http import JsonResponse
 from django.db import connections
 from django.utils import timezone
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
+from drf_spectacular.openapi import OpenApiTypes
+from rest_framework.decorators import api_view
 import redis
 from django.conf import settings
 
+@extend_schema(
+    operation_id="health_check",
+    summary="Health check endpoint",
+    description=(
+        "Check the health status of the application and its dependencies. "
+        "Used by container orchestration systems to determine if the service is healthy."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Service is healthy",
+            examples=[
+                OpenApiExample(
+                    "Healthy Response",
+                    value={
+                        "status": "healthy",
+                        "database": "connected",
+                        "redis": "connected",
+                        "timestamp": "2024-01-15T10:30:00Z",
+                        "environment": "production"
+                    }
+                )
+            ]
+        ),
+        503: OpenApiResponse(
+            description="Service is unhealthy",
+            examples=[
+                OpenApiExample(
+                    "Unhealthy Response",
+                    value={
+                        "status": "unhealthy",
+                        "error": "Redis connection failed",
+                        "timestamp": "2024-01-15T10:30:00Z"
+                    }
+                )
+            ]
+        )
+    },
+    tags=["Health"]
+)
+@api_view(['GET'])
 def health_check(request):
     """Health check endpoint for container orchestration."""
     try:
@@ -48,6 +91,47 @@ def health_check(request):
             'timestamp': timezone.now().isoformat()
         }, status=503)
 
+@extend_schema(
+    operation_id="readiness_check",
+    summary="Readiness check endpoint",
+    description=(
+        "Check if the application is ready to handle requests. "
+        "Used by container orchestration systems to determine when to start routing traffic."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Service is ready",
+            examples=[
+                OpenApiExample(
+                    "Ready Response",
+                    value={
+                        "status": "ready",
+                        "services": {
+                            "database": "ready",
+                            "redis": "ready"
+                        },
+                        "timestamp": "2024-01-15T10:30:00Z"
+                    }
+                )
+            ]
+        ),
+        503: OpenApiResponse(
+            description="Service is not ready",
+            examples=[
+                OpenApiExample(
+                    "Not Ready Response",
+                    value={
+                        "status": "not_ready",
+                        "error": "Database connection timeout",
+                        "timestamp": "2024-01-15T10:30:00Z"
+                    }
+                )
+            ]
+        )
+    },
+    tags=["Health"]
+)
+@api_view(['GET'])
 def readiness_check(request):
     """Readiness probe for Kubernetes-style orchestration."""
     try:

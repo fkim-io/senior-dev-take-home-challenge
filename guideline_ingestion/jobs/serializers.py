@@ -17,6 +17,106 @@ from drf_spectacular.openapi import OpenApiExample
 from guideline_ingestion.jobs.models import Job, JobStatus
 
 
+class ErrorResponseSerializer(serializers.Serializer):
+    """
+    Standardized error response format for all API endpoints.
+    
+    Provides consistent error structure across the API with detailed
+    error information, timestamps, and request tracking.
+    """
+    
+    success = serializers.BooleanField(
+        default=False,
+        help_text="Always false for error responses"
+    )
+    
+    error = serializers.DictField(
+        help_text="Error details object containing code, message, and additional information"
+    )
+    
+    data = serializers.JSONField(
+        allow_null=True,
+        default=None,
+        help_text="Always null for error responses"
+    )
+    
+    class Meta:
+        examples = {
+            'validation_error': {
+                "success": False,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": {
+                        "field_errors": {
+                            "guidelines": ["This field is required."]
+                        }
+                    },
+                    "timestamp": "2024-01-15T10:30:00Z",
+                    "request_id": "req_550e8400e29b41d4a716446655440000"
+                },
+                "data": None
+            },
+            'job_not_found': {
+                "success": False,
+                "error": {
+                    "code": "JOB_NOT_FOUND",
+                    "message": "Job with specified event_id not found",
+                    "details": "Please check the event_id and try again",
+                    "timestamp": "2024-01-15T10:30:00Z",
+                    "request_id": "req_550e8400e29b41d4a716446655440000"
+                },
+                "data": None
+            },
+            'rate_limit_exceeded': {
+                "success": False,
+                "error": {
+                    "code": "RATE_LIMIT_EXCEEDED",
+                    "message": "Rate limit exceeded",
+                    "details": "Maximum 100 requests per minute allowed",
+                    "timestamp": "2024-01-15T10:30:00Z",
+                    "request_id": "req_550e8400e29b41d4a716446655440000"
+                },
+                "data": None
+            },
+            'internal_server_error': {
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": "An internal server error occurred",
+                    "details": "Please try again later or contact support",
+                    "timestamp": "2024-01-15T10:30:00Z",
+                    "request_id": "req_550e8400e29b41d4a716446655440000"
+                },
+                "data": None
+            }
+        }
+
+
+class SuccessResponseSerializer(serializers.Serializer):
+    """
+    Standardized success response format for all API endpoints.
+    
+    Provides consistent success structure across the API with
+    data payload and optional success messages.
+    """
+    
+    success = serializers.BooleanField(
+        default=True,
+        help_text="Always true for success responses"
+    )
+    
+    data = serializers.JSONField(
+        help_text="Response data object containing the actual response payload"
+    )
+    
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Optional success message providing additional context"
+    )
+
+
 class JobCreateSerializer(serializers.Serializer):
     """
     Serializer for job creation requests with comprehensive validation.
