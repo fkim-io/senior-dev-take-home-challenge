@@ -11,10 +11,19 @@ from typing import Dict, Any
 
 from celery import shared_task
 from celery.exceptions import Retry
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from guideline_ingestion.jobs.models import Job, JobStatus
+from guideline_ingestion.jobs.gpt_client import (
+    GPTClient,
+    GPTClientError,
+    GPTRateLimitError,
+    GPTValidationError,
+    SummarizationError,
+    ChecklistGenerationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,37 +45,80 @@ class PermanentProcessingError(JobProcessingError):
 
 def process_guidelines_with_gpt(guidelines: str) -> Dict[str, Any]:
     """
-    Process guidelines through GPT chain (placeholder for TASK-012).
+    Process guidelines through GPT chain (TASK-012 Implementation).
     
-    This function will be fully implemented in TASK-012: GPT Integration.
-    For now, returns mock data for testing.
+    Implements a two-step GPT processing chain:
+    1. Summarize input guidelines using GPT-4
+    2. Generate actionable checklist from summary
+    
+    Args:
+        guidelines: Raw guidelines text to process
+        
+    Returns:
+        Dictionary containing:
+        {
+            "summary": str,
+            "checklist": List[Dict[str, Any]]
+        }
+        
+    Raises:
+        PermanentProcessingError: For validation errors or permanent failures
+        TemporaryProcessingError: For rate limiting or temporary API errors
     """
+    logger.info("Starting GPT guidelines processing")
+    
     if not guidelines or not guidelines.strip():
         raise PermanentProcessingError("Guidelines cannot be empty")
     
-    # Simulate processing time
-    time.sleep(0.1)
-    
-    # Mock GPT chain results
-    return {
-        'summary': f'Processed summary of guidelines: {guidelines[:50]}...',
-        'checklist': [
-            {
-                'id': 1,
-                'title': 'Review security measures',
-                'description': 'Ensure proper security implementation',
-                'priority': 'high',
-                'category': 'security'
-            },
-            {
-                'id': 2,
-                'title': 'Validate input handling',
-                'description': 'Check all input validation procedures',
-                'priority': 'medium',
-                'category': 'validation'
-            }
-        ]
-    }
+    try:
+        # Initialize GPT client
+        api_key = getattr(settings, 'OPENAI_API_KEY', None)
+        if not api_key:
+            raise PermanentProcessingError("OpenAI API key not configured")
+        
+        client = GPTClient(
+            api_key=api_key,
+            model=getattr(settings, 'OPENAI_MODEL', 'gpt-4'),
+            max_tokens=getattr(settings, 'OPENAI_MAX_TOKENS', 2000),
+            temperature=getattr(settings, 'OPENAI_TEMPERATURE', 0.1),
+            rate_limit_requests=getattr(settings, 'OPENAI_RATE_LIMIT_REQUESTS', 60),
+            rate_limit_window=getattr(settings, 'OPENAI_RATE_LIMIT_WINDOW', 60)
+        )
+        
+        # Process guidelines through two-step chain
+        result = client.process_guidelines(guidelines)
+        
+        logger.info("GPT guidelines processing completed successfully")
+        return result
+        
+    except GPTValidationError as e:
+        logger.error(f"GPT validation error: {e}")
+        raise PermanentProcessingError(f"Invalid input: {e}")
+        
+    except GPTRateLimitError as e:
+        logger.warning(f"GPT rate limit exceeded: {e}")
+        raise TemporaryProcessingError(f"Rate limit exceeded: {e}")
+        
+    except (SummarizationError, ChecklistGenerationError) as e:
+        logger.error(f"GPT processing error: {e}")
+        
+        # Check if this is a temporary error that should retry
+        error_message = str(e).lower()
+        if any(indicator in error_message for indicator in [
+            'rate limit', 'timeout', 'connection', 'network', 'server error',
+            'service unavailable', 'temporary', '5xx'
+        ]):
+            raise TemporaryProcessingError(f"Temporary GPT error: {e}")
+        else:
+            raise PermanentProcessingError(f"GPT processing failed: {e}")
+            
+    except GPTClientError as e:
+        logger.error(f"GPT client error: {e}")
+        raise PermanentProcessingError(f"GPT client error: {e}")
+        
+    except Exception as e:
+        logger.exception(f"Unexpected error in GPT processing: {e}")
+        raise PermanentProcessingError(f"Unexpected GPT error: {e}")
 
 
 @shared_task(bind=True, autoretry_for=(TemporaryProcessingError,), retry_kwargs={'max_retries': 3})

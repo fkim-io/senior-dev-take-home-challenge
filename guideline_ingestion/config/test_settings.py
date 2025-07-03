@@ -57,8 +57,13 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = 'memory://'
 CELERY_RESULT_BACKEND = 'cache+memory://'
 
-# OpenAI API key not required for testing
+# OpenAI configuration for testing
 OPENAI_API_KEY = 'test-api-key'
+OPENAI_MODEL = 'gpt-4'
+OPENAI_MAX_TOKENS = 2000
+OPENAI_TEMPERATURE = 0.1
+OPENAI_RATE_LIMIT_REQUESTS = 60
+OPENAI_RATE_LIMIT_WINDOW = 60
 
 # Disable logging during tests
 LOGGING = {
