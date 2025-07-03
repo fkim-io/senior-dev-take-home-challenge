@@ -55,7 +55,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: celery -A config worker --loglevel=info
+    command: sh -c "cd guideline_ingestion && celery -A config worker --loglevel=info"
 
 volumes:
   postgres_data:

@@ -32,16 +32,23 @@ alwaysApply: true
 ## Project Structure Conventions
 ```
 guideline_ingestion/          # Django project root
+├── config/                   # Django settings module
+│   ├── __init__.py          # Celery app import for shared_task
+│   ├── settings.py          # Environment-aware Django settings
+│   ├── celery.py           # Celery application configuration
+│   ├── urls.py             # URL routing with health endpoints
+│   └── wsgi.py             # WSGI application
 ├── jobs/                     # Main application
 │   ├── models.py            # Job model with event_id, status, etc.
 │   ├── serializers.py       # DRF serializers
 │   ├── views.py             # API endpoints
 │   ├── tasks.py             # Celery tasks
 │   └── tests/               # Test modules
-├── config/                   # Django settings
 ├── requirements.txt         # Pinned dependencies (Django 5.1+, Celery 5.4+, etc.)
 ├── docker-compose.yml       # Multi-service setup (Redis 7.2+, PostgreSQL 15+)
 ├── Dockerfile              # Django app container (Python 3.12+ base)
+├── .env                    # Environment variables (gitignored)
+├── .env.template           # Environment variables template
 └── README.md               # ≤300 words documentation
 ```
 
@@ -62,6 +69,30 @@ guideline_ingestion/          # Django project root
 - Connection pooling with psycopg 3.2+ for optimal performance
 - Database constraints for data integrity (check constraints, unique constraints)
 - Lifecycle timestamp tracking (started_at, completed_at) for monitoring and analytics
+
+## Environment Configuration Standards
+- **Environment-Aware Settings**: Use ENVIRONMENT variable to control development/testing/production behavior
+- **Secure Defaults**: Fail securely in production (require SECRET_KEY, OPENAI_API_KEY)
+- **Environment Variables**: All configuration via environment variables with sensible defaults
+- **Connection Pooling**: PostgreSQL CONN_MAX_AGE=60 with health checks enabled
+- **Celery Integration**: Proper task discovery and worker configuration with Redis backend
+- **Health Monitoring**: `/health/` and `/health/ready/` endpoints for container orchestration
+
+## Health Endpoint Standards
+```python
+# Required health endpoints for container orchestration
+/health/          # General health check (database + redis connectivity)
+/health/ready/    # Readiness probe (all services ready)
+
+# Response format:
+{
+    "status": "healthy|unhealthy|ready|not_ready",
+    "database": "connected",
+    "redis": "connected", 
+    "timestamp": "ISO-8601",
+    "environment": "development|testing|production"
+}
+```
 
 ## Code Quality Standards
 - Follow PEP 8 with black formatting
