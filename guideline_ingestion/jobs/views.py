@@ -16,6 +16,8 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, ParseError
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
+from drf_spectacular.types import OpenApiTypes
 
 from guideline_ingestion.jobs.models import Job, JobStatus
 from guideline_ingestion.jobs.serializers import (
@@ -34,6 +36,134 @@ class JobCreateView(APIView):
     Performance requirement: <200ms response time
     """
     
+    @extend_schema(
+        operation_id="jobs_create",
+        summary="Create new job for guideline processing",
+        description=(
+            "Submit guidelines for processing through the GPT chain. "
+            "The job will be queued for asynchronous processing and return an event_id for tracking. "
+            "**Performance requirement**: <200ms response time (95th percentile)."
+        ),
+        request=JobCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                description="Job created successfully",
+                examples=[
+                    OpenApiExample(
+                        "Success Response",
+                        value={
+                            "success": True,
+                            "data": {
+                                "event_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "status": "PENDING",
+                                "created_at": "2024-01-15T10:30:00Z",
+                                "estimated_completion": "2024-01-15T10:31:30Z"
+                            },
+                            "message": "Job submitted successfully"
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="Validation error",
+                examples=[
+                    OpenApiExample(
+                        "Field Validation Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "VALIDATION_ERROR",
+                                "message": "Request validation failed",
+                                "details": {
+                                    "field_errors": {
+                                        "guidelines": ["This field is required."],
+                                        "callback_url": ["Enter a valid URL."]
+                                    }
+                                },
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    ),
+                    OpenApiExample(
+                        "JSON Parse Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "JSON_PARSE_ERROR",
+                                "message": "Invalid JSON in request body",
+                                "details": "Expecting ',' delimiter: line 1 column 25 (char 24)",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "unknown"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            ),
+            429: OpenApiResponse(
+                description="Rate limit exceeded",
+                examples=[
+                    OpenApiExample(
+                        "Rate Limit Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "RATE_LIMIT_EXCEEDED",
+                                "message": "Rate limit exceeded",
+                                "details": "Maximum 100 requests per minute allowed",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            ),
+            500: OpenApiResponse(
+                description="Internal server error",
+                examples=[
+                    OpenApiExample(
+                        "Internal Server Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "INTERNAL_SERVER_ERROR",
+                                "message": "An internal server error occurred",
+                                "details": "Please try again later or contact support",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            )
+        },
+        examples=[
+            OpenApiExample(
+                "Basic Job Submission",
+                value={
+                    "guidelines": "Patient care guidelines for emergency room triage procedures. Patients with chest pain should be immediately assessed for cardiac symptoms."
+                }
+            ),
+            OpenApiExample(
+                "Job with Callback and Metadata",
+                value={
+                    "guidelines": "Healthcare protocol for medication administration. All medications must be double-checked before administration.",
+                    "callback_url": "https://example.com/webhooks/job-completed",
+                    "priority": "high",
+                    "metadata": {
+                        "department": "cardiology",
+                        "version": "2.1",
+                        "requester": "dr.smith@hospital.com"
+                    }
+                }
+            )
+        ],
+        tags=["Jobs"]
+    )
     def post(self, request) -> Response:
         """Create new job and queue for async processing."""
         try:
@@ -51,6 +181,9 @@ class JobCreateView(APIView):
             # 4. Return success response (<10ms)
             return self._success_response(job)
             
+        except ParseError:
+            # Let DRF handle parse errors
+            raise
         except Exception as e:
             logger.exception(f"Unexpected error in job creation: {str(e)}")
             return self._internal_error_response(request)
@@ -166,6 +299,157 @@ class JobRetrieveView(APIView):
     Performance requirement: <100ms response time
     """
     
+    @extend_schema(
+        operation_id="jobs_retrieve",
+        summary="Retrieve job status and results",
+        description=(
+            "Retrieve the current status and results of a job by its event_id. "
+            "Response fields vary based on job status (PENDING, PROCESSING, COMPLETED, FAILED). "
+            "**Performance requirement**: <100ms response time (95th percentile)."
+        ),
+        responses={
+            200: OpenApiResponse(
+                description="Job retrieved successfully",
+                examples=[
+                    OpenApiExample(
+                        "PENDING Job Status",
+                        value={
+                            "success": True,
+                            "data": {
+                                "event_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "status": "PENDING",
+                                "created_at": "2024-01-15T10:30:00Z",
+                                "updated_at": "2024-01-15T10:30:00Z",
+                                "estimated_completion": "2024-01-15T10:31:30Z",
+                                "queue_position": 3
+                            }
+                        }
+                    ),
+                    OpenApiExample(
+                        "PROCESSING Job Status",
+                        value={
+                            "success": True,
+                            "data": {
+                                "event_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "status": "PROCESSING",
+                                "created_at": "2024-01-15T10:30:00Z",
+                                "updated_at": "2024-01-15T10:30:45Z",
+                                "started_at": "2024-01-15T10:30:45Z",
+                                "estimated_completion": "2024-01-15T10:31:30Z",
+                                "current_step": "summarization",
+                                "retry_count": 0
+                            }
+                        }
+                    ),
+                    OpenApiExample(
+                        "COMPLETED Job Status",
+                        value={
+                            "success": True,
+                            "data": {
+                                "event_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "status": "COMPLETED",
+                                "created_at": "2024-01-15T10:30:00Z",
+                                "updated_at": "2024-01-15T10:31:15Z",
+                                "started_at": "2024-01-15T10:30:45Z",
+                                "completed_at": "2024-01-15T10:31:15Z",
+                                "estimated_completion": "2024-01-15T10:31:30Z",
+                                "processing_time_seconds": 30.5,
+                                "retry_count": 0,
+                                "result": {
+                                    "summary": "Patient care guidelines for emergency room triage...",
+                                    "checklist": [
+                                        "Assess chest pain severity",
+                                        "Check vital signs",
+                                        "Perform ECG within 10 minutes"
+                                    ]
+                                },
+                                "metadata": {
+                                    "gpt_model_used": "gpt-4",
+                                    "tokens_consumed": 1250,
+                                    "processing_steps": ["summarization", "checklist_generation"]
+                                }
+                            }
+                        }
+                    ),
+                    OpenApiExample(
+                        "FAILED Job Status",
+                        value={
+                            "success": True,
+                            "data": {
+                                "event_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "status": "FAILED",
+                                "created_at": "2024-01-15T10:30:00Z",
+                                "updated_at": "2024-01-15T10:30:55Z",
+                                "started_at": "2024-01-15T10:30:45Z",
+                                "completed_at": "2024-01-15T10:30:55Z",
+                                "processing_time_seconds": 10.0,
+                                "retry_count": 2,
+                                "error_message": "GPT API rate limit exceeded. Maximum retries reached."
+                            }
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="Invalid event_id format",
+                examples=[
+                    OpenApiExample(
+                        "Invalid UUID Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "INVALID_UUID",
+                                "message": "Invalid event_id format",
+                                "details": "event_id must be a valid UUID",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            ),
+            404: OpenApiResponse(
+                description="Job not found",
+                examples=[
+                    OpenApiExample(
+                        "Job Not Found Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "JOB_NOT_FOUND",
+                                "message": "Job with specified event_id not found",
+                                "details": "Please check the event_id and try again",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            ),
+            500: OpenApiResponse(
+                description="Internal server error",
+                examples=[
+                    OpenApiExample(
+                        "Internal Server Error",
+                        value={
+                            "success": False,
+                            "error": {
+                                "code": "INTERNAL_SERVER_ERROR",
+                                "message": "An internal server error occurred",
+                                "details": "Please try again later or contact support",
+                                "timestamp": "2024-01-15T10:30:00Z",
+                                "request_id": "req_550e8400e29b41d4a716446655440000"
+                            },
+                            "data": None
+                        }
+                    )
+                ]
+            )
+        },
+        tags=["Jobs"]
+    )
     def get(self, request, event_id) -> Response:
         """Retrieve job by event_id with status-specific response."""
         try:

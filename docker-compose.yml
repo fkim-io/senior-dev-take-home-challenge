@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15  # PostgreSQL 15+ for advanced JSONB features
@@ -58,7 +56,7 @@ services:
     working_dir: /app
     environment:
       - PYTHONPATH=/app:/app/guideline_ingestion
-    command: sh -c "cd guideline_ingestion && celery -A config.celery worker --loglevel=info"
+    command: sh -c "cd guideline_ingestion && celery -A config.celery worker --loglevel=info -Q default,gpt_processing,maintenance,monitoring"
 
 volumes:
   postgres_data:

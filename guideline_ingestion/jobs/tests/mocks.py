@@ -20,6 +20,61 @@ class MockOpenAIClient:
         self.call_count = 0
         self.call_history = []
     
+    def generate_summary(self, guidelines):
+        """Generate mock summary response for testing."""
+        self.call_count += 1
+        return {
+            'choices': [
+                {
+                    'message': {
+                        'content': f'Test summary of guidelines: {guidelines[:50]}...'
+                    },
+                    'finish_reason': 'stop'
+                }
+            ],
+            'usage': {
+                'prompt_tokens': 100,
+                'completion_tokens': 50,
+                'total_tokens': 150
+            },
+            'model': 'gpt-4'
+        }
+    
+    def generate_checklist(self, summary):
+        """Generate mock checklist response for testing."""
+        self.call_count += 1
+        return {
+            'choices': [
+                {
+                    'message': {
+                        'content': json.dumps([
+                            {
+                                'id': 1,
+                                'title': 'Test Checklist Item 1',
+                                'description': 'Description for test item 1',
+                                'priority': 'high',
+                                'category': 'security'
+                            },
+                            {
+                                'id': 2,
+                                'title': 'Test Checklist Item 2',
+                                'description': 'Description for test item 2',
+                                'priority': 'medium',
+                                'category': 'implementation'
+                            }
+                        ])
+                    },
+                    'finish_reason': 'stop'
+                }
+            ],
+            'usage': {
+                'prompt_tokens': 200,
+                'completion_tokens': 100,
+                'total_tokens': 300
+            },
+            'model': 'gpt-4'
+        }
+    
     def create_chat_completion(self, messages, model="gpt-3.5-turbo", **kwargs):
         """Mock chat completion creation."""
         self.call_count += 1
@@ -158,6 +213,20 @@ class MockRedisClient:
         self.call_count += 1
         self.data.clear()
         return True
+    
+    def lpush(self, key, *values):
+        """Mock Redis LPUSH command."""
+        self.call_count += 1
+        if key not in self.data:
+            self.data[key] = {'value': [], 'timestamp': datetime.now(timezone.utc)}
+        for value in values:
+            self.data[key]['value'].insert(0, value)
+        return len(self.data[key]['value'])
+    
+    def llen(self, key):
+        """Mock Redis LLEN command."""
+        self.call_count += 1
+        return len(self.data.get(key, {}).get('value', []))
 
 
 class MockCeleryTask:
@@ -165,31 +234,54 @@ class MockCeleryTask:
     
     def __init__(self, task_id=None, result=None, status='SUCCESS'):
         self.task_id = task_id or str(uuid.uuid4())
-        self.result = result
+        self.result = result or {'status': 'completed', 'result': 'mock_result'}
         self.status = status
         self.call_count = 0
     
     def delay(self, *args, **kwargs):
         """Mock task.delay()."""
         self.call_count += 1
-        return Mock(
-            id=self.task_id,
-            status=self.status,
-            result=self.result,
-            args=args,
-            kwargs=kwargs
-        )
+        return MockAsyncResult(self.result, self.status == 'SUCCESS', self.task_id)
     
     def apply_async(self, *args, **kwargs):
         """Mock task.apply_async()."""
         self.call_count += 1
-        return Mock(
-            id=self.task_id,
-            status=self.status,
-            result=self.result,
-            args=args,
-            kwargs=kwargs
-        )
+        return MockAsyncResult(self.result, self.status == 'SUCCESS', self.task_id)
+        
+    def successful(self):
+        """Check if task completed successfully."""
+        return self.status == 'SUCCESS'
+
+
+class MockAsyncResult:
+    """Mock Celery AsyncResult for testing."""
+    
+    def __init__(self, result=None, success=True, task_id=None):
+        self.result = result
+        self._success = success
+        self.id = task_id or str(uuid.uuid4())
+        self.state = 'SUCCESS' if success else 'FAILURE'
+    
+    def ready(self):
+        """Check if task is ready."""
+        return True
+    
+    def successful(self):
+        """Check if task completed successfully."""
+        return self._success
+    
+    def failed(self):
+        """Check if task failed."""
+        return not self._success
+    
+    def get(self, timeout=None, propagate=True):
+        """Get task result."""
+        if self._success:
+            return self.result
+        else:
+            if propagate:
+                raise Exception("Mock task failed")
+            return None
 
 
 class MockDatabaseConnection:
@@ -340,7 +432,7 @@ def create_mock_response(status_code=200, data=None, headers=None):
     return mock_response
 
 
-class TestDataManager:
+class DataManager:
     """Manage test data lifecycle."""
     
     def __init__(self):

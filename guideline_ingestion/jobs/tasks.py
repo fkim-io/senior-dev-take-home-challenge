@@ -307,15 +307,36 @@ def _calculate_retry_delay(retry_count: int) -> int:
 
 
 @shared_task
-def cleanup_old_jobs():
+def cleanup_old_jobs(retention_days: int = 30):
     """
-    Cleanup old completed/failed jobs (placeholder for future implementation).
+    Cleanup old completed/failed jobs to prevent database bloat.
     
-    This task will be used for periodic cleanup of old job records.
+    Args:
+        retention_days: Number of days to retain completed/failed jobs (default: 30)
+    
+    Returns:
+        str: Summary of cleanup operation
     """
-    # Placeholder for job cleanup logic
-    logger.info("Job cleanup task executed (placeholder)")
-    return "Cleanup completed"
+    from datetime import timedelta
+    from django.utils import timezone
+    from guideline_ingestion.jobs.models import Job, JobStatus
+    
+    cutoff_date = timezone.now() - timedelta(days=retention_days)
+    
+    # Only cleanup completed and failed jobs, keep pending/processing
+    old_jobs = Job.objects.filter(
+        status__in=[JobStatus.COMPLETED, JobStatus.FAILED],
+        completed_at__lt=cutoff_date
+    )
+    
+    deleted_count = old_jobs.count()
+    if deleted_count > 0:
+        old_jobs.delete()
+        logger.info(f"Cleanup completed: removed {deleted_count} old jobs older than {retention_days} days")
+    else:
+        logger.info(f"Cleanup completed: no old jobs found older than {retention_days} days")
+    
+    return f"Cleanup completed: {deleted_count} jobs removed"
 
 
 @shared_task
@@ -323,8 +344,91 @@ def monitor_job_health():
     """
     Monitor job processing health and send alerts if needed.
     
-    This task will be used for monitoring job processing performance.
+    Checks for stuck jobs, failed job rates, and processing performance.
+    Provides metrics and alerts for job processing health monitoring.
+    
+    Returns:
+        str: Summary of health monitoring results
     """
-    # Placeholder for health monitoring logic
-    logger.info("Job health monitoring executed (placeholder)")
-    return "Health check completed"
+    from datetime import timedelta
+    from django.utils import timezone
+    from guideline_ingestion.jobs.models import Job, JobStatus
+    
+    now = timezone.now()
+    health_report = []
+    
+    # Check for stuck jobs (processing for >30 minutes)
+    stuck_threshold = now - timedelta(minutes=30)
+    stuck_jobs = Job.objects.filter(
+        status=JobStatus.PROCESSING,
+        started_at__lt=stuck_threshold
+    )
+    
+    stuck_count = stuck_jobs.count()
+    if stuck_count > 0:
+        logger.warning(f"Found {stuck_count} stuck jobs processing for >30 minutes")
+        health_report.append(f"ALERT: {stuck_count} stuck jobs detected")
+        
+        # Log details of stuck jobs
+        for job in stuck_jobs[:5]:  # Log first 5 stuck jobs
+            duration = now - job.started_at
+            logger.warning(f"Stuck job {job.event_id}: processing for {duration.total_seconds():.0f}s")
+    else:
+        health_report.append("No stuck jobs detected")
+    
+    # Check failed job rate in last hour
+    one_hour_ago = now - timedelta(hours=1)
+    recent_jobs = Job.objects.filter(created_at__gte=one_hour_ago)
+    failed_jobs = recent_jobs.filter(status=JobStatus.FAILED)
+    
+    total_recent = recent_jobs.count()
+    failed_recent = failed_jobs.count()
+    
+    if total_recent > 0:
+        failure_rate = (failed_recent / total_recent) * 100
+        if failure_rate > 20:  # Alert if >20% failure rate
+            logger.warning(f"High failure rate: {failure_rate:.1f}% ({failed_recent}/{total_recent}) in last hour")
+            health_report.append(f"ALERT: High failure rate {failure_rate:.1f}%")
+        else:
+            health_report.append(f"Failure rate: {failure_rate:.1f}% ({failed_recent}/{total_recent})")
+    else:
+        health_report.append("No recent jobs to analyze")
+    
+    # Check queue backlog
+    pending_jobs = Job.objects.filter(status=JobStatus.PENDING).count()
+    if pending_jobs > 50:  # Alert if >50 jobs queued
+        logger.warning(f"Large queue backlog: {pending_jobs} pending jobs")
+        health_report.append(f"ALERT: Large queue backlog ({pending_jobs} pending)")
+    else:
+        health_report.append(f"Queue backlog: {pending_jobs} pending jobs")
+    
+    # Check processing times for completed jobs in last hour
+    completed_jobs = Job.objects.filter(
+        status=JobStatus.COMPLETED,
+        completed_at__gte=one_hour_ago,
+        started_at__isnull=False
+    )
+    
+    if completed_jobs.exists():
+        processing_times = []
+        for job in completed_jobs:
+            duration = job.completed_at - job.started_at
+            processing_times.append(duration.total_seconds())
+        
+        if processing_times:
+            avg_time = sum(processing_times) / len(processing_times)
+            max_time = max(processing_times)
+            
+            if avg_time > 120:  # Alert if average >2 minutes
+                logger.warning(f"Slow processing: avg {avg_time:.1f}s, max {max_time:.1f}s")
+                health_report.append(f"ALERT: Slow processing (avg {avg_time:.1f}s)")
+            else:
+                health_report.append(f"Processing times: avg {avg_time:.1f}s, max {max_time:.1f}s")
+    else:
+        health_report.append("No completed jobs to analyze processing times")
+    
+    # Log summary
+    summary = "; ".join(health_report)
+    logger.info(f"Job health monitoring completed: {summary}")
+    
+    return f"Health monitoring completed: {summary}"

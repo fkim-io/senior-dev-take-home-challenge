@@ -26,7 +26,7 @@ from .mocks import (
     mock_redis_client,
     mock_celery_task,
     mock_database_connection,
-    TestDataManager
+    DataManager
 )
 from .factories import (
     JobDataFactory,
@@ -151,7 +151,7 @@ class TestDjangoDatabaseConnectivity(TestCase):
             cursor.execute("""
                 SELECT table_name 
                 FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'jobs_job'
+                WHERE table_schema = 'public' AND table_name = 'jobs'
             """)
             result = cursor.fetchone()
             self.assertIsNotNone(result)
@@ -199,7 +199,7 @@ class TestInfrastructureBase:
     
     def setup_method(self):
         """Set up test environment."""
-        self.test_data_manager = TestDataManager()
+        self.test_data_manager = DataManager()
     
     def teardown_method(self):
         """Clean up after tests."""

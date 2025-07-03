@@ -16,5 +16,5 @@ urlpatterns = [
     path('', JobCreateView.as_view(), name='job-create'),
     
     # GET /jobs/{event_id}/ - Job status and result retrieval endpoint
-    path('<uuid:event_id>/', JobRetrieveView.as_view(), name='job-retrieve'),
+    path('<flexible_uuid:event_id>/', JobRetrieveView.as_view(), name='job-retrieve'),
 ]

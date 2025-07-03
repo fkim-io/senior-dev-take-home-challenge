@@ -82,8 +82,16 @@ class JobDataFactory(factory.Factory):
         model = dict
     
     guidelines = factory.Faker('text', max_nb_chars=1000)
-    title = factory.Faker('sentence', nb_words=3)
-    description = factory.Faker('text', max_nb_chars=200)
+    priority = fuzzy.FuzzyChoice(['low', 'normal', 'high'])
+    metadata = factory.Dict({
+        'source': 'test',
+        'version': '1.0'
+    })
+    
+    @classmethod
+    def build(cls, **kwargs):
+        """Build job data dictionary."""
+        return super().build(**kwargs)
 
 
 class OpenAIResponseFactory(factory.Factory):
@@ -121,6 +129,21 @@ class OpenAIResponseFactory(factory.Factory):
         prompt_tokens = fuzzy.FuzzyInteger(50, 200)
         completion_tokens = fuzzy.FuzzyInteger(20, 100)
         total_tokens = factory.LazyAttribute(lambda obj: obj.prompt_tokens + obj.completion_tokens)
+    
+    @classmethod
+    def build_summary_response(cls, **kwargs):
+        """Build a summary response."""
+        return cls.build(
+            choices=[{
+                'index': 0,
+                'finish_reason': 'stop',
+                'message': {
+                    'role': 'assistant',
+                    'content': 'Test summary response'
+                }
+            }],
+            **kwargs
+        )
 
 
 class SummaryResponseFactory(OpenAIResponseFactory):
@@ -190,6 +213,17 @@ class APIRequestFactory(factory.Factory):
         return cls.build(
             guidelines="",  # Invalid empty guidelines
             title="",       # Invalid empty title
+            **kwargs
+        )
+    
+    @classmethod
+    def build_job_create_request(cls, **kwargs):
+        """Create a job creation request."""
+        from faker import Faker
+        fake = Faker()
+        return cls.build(
+            guidelines=fake.text(max_nb_chars=1000),
+            priority='normal',
             **kwargs
         )
 

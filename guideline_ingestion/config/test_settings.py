@@ -51,11 +51,34 @@ CACHES = {
     }
 }
 
-# Celery configuration for testing
-CELERY_TASK_ALWAYS_EAGER = True
-CELERY_TASK_EAGER_PROPAGATES = True
+# Celery configuration for testing - conditional based on test type
+import os
+# Check if this is an integration test run specifically
+_is_integration_test = any('test_integration' in arg for arg in os.sys.argv) if hasattr(os, 'sys') else False
+# Only enable eager execution for integration tests that need end-to-end testing
+CELERY_TASK_ALWAYS_EAGER = _is_integration_test
+CELERY_TASK_EAGER_PROPAGATES = _is_integration_test
 CELERY_BROKER_URL = 'memory://'
 CELERY_RESULT_BACKEND = 'cache+memory://'
+
+# Django REST Framework settings for testing
+REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [],  # Disable throttling for tests
+    'DEFAULT_THROTTLE_RATES': {},
+    'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+}
 
 # OpenAI configuration for testing
 OPENAI_API_KEY = 'test-api-key'
