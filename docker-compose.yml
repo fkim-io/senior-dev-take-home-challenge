@@ -31,17 +31,8 @@ services:
     build: .  # Uses Python 3.12-slim base image
     ports:
       - "8000:8000"
-    environment:
-      - POSTGRES_DB=guideline_ingestion
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DJANGO_DEBUG=True
-      - DJANGO_SECRET_KEY=django-insecure-docker-development-key-change-in-production
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_api_key_here}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,17 +46,8 @@ services:
 
   celery:
     build: .  # Uses Python 3.12-slim base image
-    environment:
-      - POSTGRES_DB=guideline_ingestion
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DJANGO_DEBUG=True
-      - DJANGO_SECRET_KEY=django-insecure-docker-development-key-change-in-production
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_api_key_here}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
