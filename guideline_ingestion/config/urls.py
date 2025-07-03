@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.http import JsonResponse
 from django.db import connections
 from django.utils import timezone
-from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
 from drf_spectacular.openapi import OpenApiTypes
 from rest_framework.decorators import api_view
@@ -163,5 +163,6 @@ urlpatterns = [
     path('health/ready/', readiness_check, name='readiness'),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc-ui'),
     path('jobs/', include('guideline_ingestion.jobs.urls')),
 ]
