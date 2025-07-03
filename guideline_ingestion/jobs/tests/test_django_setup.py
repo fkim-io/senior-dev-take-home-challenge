@@ -66,7 +66,7 @@ class TestDjangoConfiguration:
         ]
         
         required_local_apps = [
-            'jobs',
+            'guideline_ingestion.jobs',
         ]
         
         for app in required_django_apps + required_third_party_apps + required_local_apps:
@@ -375,7 +375,7 @@ class TestApplicationStartup:
         # Should be able to get app configs
         jobs_app = apps.get_app_config('jobs')
         assert jobs_app is not None
-        assert jobs_app.name == 'jobs'
+        assert jobs_app.name == 'guideline_ingestion.jobs'
     
     def test_django_startup_time(self):
         """Test Django startup is reasonably fast."""
