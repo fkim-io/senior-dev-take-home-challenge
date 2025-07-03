@@ -10,7 +10,7 @@ from celery import Celery
 from django.conf import settings
 
 # Set the default Django settings module for the 'celery' program.
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'guideline_ingestion.config.settings')
 
 app = Celery('guideline_ingestion')
 
@@ -38,6 +38,19 @@ app.conf.update(
     task_default_retry_delay=60,
     task_max_retries=3,
     result_expires=3600,  # 1 hour
+    task_soft_time_limit=900,  # 15 minutes soft limit
+    task_time_limit=1800,  # 30 minutes hard limit
+    worker_max_tasks_per_child=1000,  # Restart worker after 1000 tasks
+    worker_max_memory_per_child=200000,  # 200MB memory limit per worker
+    task_compression='gzip',
+    result_compression='gzip',
+    task_routes={
+        'guideline_ingestion.jobs.tasks.process_guideline_job': {'queue': 'gpt_processing'},
+        'guideline_ingestion.jobs.tasks.cleanup_old_jobs': {'queue': 'maintenance'},
+        'guideline_ingestion.jobs.tasks.monitor_job_health': {'queue': 'monitoring'},
+    },
+    task_default_queue='default',
+    task_create_missing_queues=True,
 )
 
 @app.task(bind=True)
