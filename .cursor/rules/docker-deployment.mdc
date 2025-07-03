@@ -105,10 +105,8 @@ services:
     build: .  # Uses Python 3.12-slim base image
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
-      - REDIS_URL=redis://redis:6379/0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,10 +120,8 @@ services:
 
   celery:
     build: .  # Uses Python 3.12-slim base image
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
-      - REDIS_URL=redis://redis:6379/0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,7 +129,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: celery -A config worker --loglevel=info
+    command: sh -c "cd guideline_ingestion && celery -A config worker --loglevel=info"
 
 volumes:
   postgres_data:
@@ -143,23 +139,32 @@ volumes:
 
 ### .env Template
 ```env
-# Database
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/guideline_ingestion
+# Database Configuration
+POSTGRES_DB=guideline_ingestion
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
 
-# Redis
-REDIS_URL=redis://redis:6379/0
+# Redis Configuration
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_DB=0
 
-# OpenAI
+# OpenAI API Configuration
 OPENAI_API_KEY=your_openai_api_key_here
 
-# Django
-DEBUG=True
-SECRET_KEY=your_secret_key_here
+# Django Configuration
+DJANGO_DEBUG=True
+DJANGO_SECRET_KEY=django-insecure-docker-development-key-change-in-production
 ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
 
-# Celery
+# Celery Configuration
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+# Development/Production Environment
+ENVIRONMENT=development
 ```
 
 ### .dockerignore
@@ -273,6 +278,30 @@ services:
 6. All services healthy and responsive
 
 ### Required Endpoints After Startup
-- `GET /health/` - Health check (200 OK)
-- `POST /jobs/` - Job creation (<200ms)
-- `GET /jobs/{event_id}/` - Job status retrieval
+- `GET /health/` - Health check with database and Redis connectivity validation
+- `GET /health/ready/` - Readiness probe for Kubernetes-style orchestration
+- `GET /admin/` - Django admin interface (302 redirect to login)
+- `POST /jobs/` - Job creation (<200ms) - to be implemented in TASK-010
+- `GET /jobs/{event_id}/` - Job status retrieval - to be implemented in TASK-010
+
+### Health Check Response Examples
+```json
+# /health/ - Successful response
+{
+    "status": "healthy",
+    "database": "connected", 
+    "redis": "connected",
+    "timestamp": "2025-07-03T08:04:38.322540+00:00",
+    "environment": "development"
+}
+
+# /health/ready/ - Readiness response  
+{
+    "status": "ready",
+    "services": {
+        "database": "ready",
+        "redis": "ready"
+    },
+    "timestamp": "2025-07-03T08:04:38.322540+00:00"
+}
+```
