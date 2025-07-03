@@ -731,3 +731,377 @@ class TestSystemReliabilityAndConsistency(TestCase):
         # Verify final job state is consistent
         job.refresh_from_db()
         self.assertIn(job.status, [JobStatus.COMPLETED, JobStatus.FAILED])
+
+
+class TestEndToEndGPTIntegration(TestCase):
+    """Test complete end-to-end GPT integration (merged from test_end_to_end_gpt.py)."""
+    
+    def setUp(self):
+        """Set up test data."""
+        self.test_guidelines = """
+        API Security Guidelines:
+        1. Use HTTPS for all endpoints
+        2. Implement authentication and authorization
+        3. Validate all input data
+        4. Use rate limiting
+        5. Log security events
+        """
+        
+        self.job = Job.objects.create(
+            status=JobStatus.PENDING,
+            input_data={'guidelines': self.test_guidelines}
+        )
+    
+    @patch('guideline_ingestion.jobs.tasks.process_guidelines_with_gpt')
+    def test_end_to_end_processing_success(self, mock_gpt_process):
+        """Test complete end-to-end processing with GPT integration."""
+        # Mock GPT processing response
+        mock_gpt_response = {
+            'summary': 'API security guidelines covering HTTPS, authentication, validation, rate limiting, and logging.',
+            'checklist': [
+                {
+                    'id': 1,
+                    'title': 'Implement HTTPS',
+                    'description': 'Ensure all API endpoints use HTTPS encryption',
+                    'priority': 'high',
+                    'category': 'security'
+                },
+                {
+                    'id': 2,
+                    'title': 'Add authentication',
+                    'description': 'Implement proper authentication mechanisms',
+                    'priority': 'high',
+                    'category': 'security'
+                },
+                {
+                    'id': 3,
+                    'title': 'Validate input',
+                    'description': 'Implement thorough input validation',
+                    'priority': 'medium',
+                    'category': 'validation'
+                }
+            ]
+        }
+        mock_gpt_process.return_value = mock_gpt_response
+        
+        # Execute the task
+        result = process_guideline_job(self.job.id, self.test_guidelines)
+        
+        # Verify task result
+        self.assertEqual(result, mock_gpt_response)
+        
+        # Verify job was updated correctly
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, JobStatus.COMPLETED)
+        self.assertEqual(self.job.result, mock_gpt_response)
+        self.assertIsNotNone(self.job.started_at)
+        self.assertIsNotNone(self.job.completed_at)
+        self.assertIsNone(self.job.error_message)
+        
+        # Verify GPT processing was called with correct input
+        mock_gpt_process.assert_called_once_with(self.test_guidelines)
+        
+        # Verify result structure
+        self.assertIn('summary', self.job.result)
+        self.assertIn('checklist', self.job.result)
+        
+        # Verify summary
+        summary = self.job.result['summary']
+        self.assertIsInstance(summary, str)
+        self.assertIn('API security', summary)
+        
+        # Verify checklist structure
+        checklist = self.job.result['checklist']
+        self.assertIsInstance(checklist, list)
+        self.assertEqual(len(checklist), 3)
+        
+        for item in checklist:
+            self.assertIn('id', item)
+            self.assertIn('title', item) 
+            self.assertIn('description', item)
+            self.assertIn('priority', item)
+            self.assertIn('category', item)
+    
+    def test_end_to_end_gpt_configuration(self):
+        """Test that GPT configuration is properly loaded from settings."""
+        from django.conf import settings
+        
+        # Verify OpenAI configuration is available
+        self.assertIsNotNone(settings.OPENAI_API_KEY)
+        self.assertEqual(settings.OPENAI_MODEL, 'gpt-4')
+        self.assertEqual(settings.OPENAI_MAX_TOKENS, 2000)
+        self.assertEqual(settings.OPENAI_TEMPERATURE, 0.1)
+        self.assertEqual(settings.OPENAI_RATE_LIMIT_REQUESTS, 60)
+        self.assertEqual(settings.OPENAI_RATE_LIMIT_WINDOW, 60)
+
+
+class TestPerformanceValidation(APITestCase):
+    """Consolidated performance testing (moved from test_views.py)."""
+    
+    def setUp(self):
+        """Set up test client and sample data."""
+        self.client = APIClient()
+        self.create_url = reverse('jobs:job-create')
+        self.valid_payload = {
+            'guidelines': 'Performance test guidelines for API response time validation.',
+            'priority': 'normal',
+            'metadata': {
+                'source': 'performance_test',
+                'test_type': 'response_time'
+            }
+        }
+        
+        # Create a completed job for retrieval tests
+        self.completed_job = Job.objects.create(
+            status=JobStatus.COMPLETED,
+            input_data={'guidelines': 'Completed job for performance testing'},
+            result={
+                'summary': 'Performance test summary',
+                'checklist': [
+                    {
+                        'id': 1,
+                        'title': 'Performance test item',
+                        'description': 'Test item for performance validation',
+                        'priority': 'high',
+                        'category': 'performance'
+                    }
+                ]
+            }
+        )
+    
+    def test_job_create_response_time_performance(self):
+        """Test that job creation responds within 200ms requirement."""
+        start_time = time.time()
+        
+        response = self.client.post(
+            self.create_url,
+            data=json.dumps(self.valid_payload),
+            content_type='application/json'
+        )
+        
+        end_time = time.time()
+        response_time_ms = (end_time - start_time) * 1000
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertLess(response_time_ms, 200, f"Response time {response_time_ms}ms exceeds 200ms requirement")
+    
+    def test_job_retrieve_response_time_performance(self):
+        """Test that job retrieval responds within 100ms requirement."""
+        retrieve_url = reverse('jobs:job-retrieve', kwargs={'event_id': self.completed_job.event_id})
+        
+        start_time = time.time()
+        
+        response = self.client.get(retrieve_url)
+        
+        end_time = time.time()
+        response_time_ms = (end_time - start_time) * 1000
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertLess(response_time_ms, 100, f"Response time {response_time_ms}ms exceeds 100ms requirement")
+    
+    @patch('guideline_ingestion.jobs.tasks.process_guidelines_with_gpt')
+    def test_concurrent_request_performance(self, mock_gpt_process):
+        """Test API performance with multiple concurrent requests."""
+        # Mock fast GPT processing for performance testing
+        mock_gpt_process.return_value = {
+            'summary': 'Fast concurrent test summary',
+            'checklist': [{
+                'id': 1,
+                'title': 'Concurrent test',
+                'description': 'Test concurrent processing',
+                'priority': 'high',
+                'category': 'performance'
+            }]
+        }
+        
+        import concurrent.futures
+        
+        def create_job():
+            """Create a single job and measure response time."""
+            start_time = time.time()
+            response = self.client.post(
+                self.create_url,
+                data=json.dumps(self.valid_payload),
+                content_type='application/json'
+            )
+            response_time = (time.time() - start_time) * 1000
+            return response.status_code, response_time
+        
+        # Create 10 concurrent requests
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(create_job) for _ in range(10)]
+            results = [future.result() for future in concurrent.futures.as_completed(futures)]
+        
+        # Verify all requests succeeded and met performance requirements
+        for status_code, response_time in results:
+            self.assertEqual(status_code, status.HTTP_201_CREATED)
+            self.assertLess(response_time, 200, f"Response time {response_time}ms exceeds 200ms requirement")
+    
+    def test_large_dataset_query_performance(self):
+        """Test database query performance with large dataset."""
+        # Create 100 jobs for performance testing
+        jobs = []
+        for i in range(100):
+            job = Job.objects.create(
+                status=JobStatus.COMPLETED,
+                input_data={'guidelines': f'Large dataset test job {i}'},
+                result={'summary': f'Summary {i}', 'checklist': []}
+            )
+            jobs.append(job)
+        
+        # Test query performance
+        start_time = time.time()
+        
+        # Query all jobs
+        all_jobs = Job.objects.all()
+        job_count = all_jobs.count()
+        
+        # Query with filtering
+        completed_jobs = Job.objects.filter(status=JobStatus.COMPLETED)
+        completed_count = completed_jobs.count()
+        
+        query_time = (time.time() - start_time) * 1000
+        
+        # Verify query performance (should be fast even with large dataset)
+        self.assertLess(query_time, 100, f"Query time {query_time}ms exceeds 100ms for large dataset")
+        
+        # Verify results
+        self.assertGreaterEqual(job_count, 101)  # Including setup job
+        self.assertGreaterEqual(completed_count, 101)
+    
+    def test_memory_usage_during_bulk_operations(self):
+        """Test memory usage during bulk job operations."""
+        import psutil
+        import os
+        
+        # Get initial memory usage
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+        
+        # Perform bulk operations
+        bulk_jobs = []
+        for i in range(50):
+            job = Job(
+                status=JobStatus.PENDING,
+                input_data={'guidelines': f'Bulk operation test job {i}'}
+            )
+            bulk_jobs.append(job)
+        
+        # Bulk create
+        Job.objects.bulk_create(bulk_jobs)
+        
+        # Bulk update
+        Job.objects.filter(input_data__guidelines__contains='Bulk operation').update(
+            status=JobStatus.PROCESSING,
+            started_at=timezone.now()
+        )
+        
+        # Check memory usage after bulk operations
+        final_memory = process.memory_info().rss / 1024 / 1024  # MB
+        memory_increase = final_memory - initial_memory
+        
+        # Memory increase should be reasonable (less than 50MB for 50 jobs)
+        self.assertLess(memory_increase, 50, f"Memory increase {memory_increase}MB exceeds 50MB threshold")
+    
+    def test_system_behavior_at_capacity_limits(self):
+        """Test system behavior when approaching capacity limits."""
+        # Create a large number of jobs to test system capacity
+        bulk_jobs = []
+        for i in range(200):
+            job = Job(
+                status=JobStatus.PENDING,
+                input_data={'guidelines': f'Capacity test job {i}', 'load_test': True}
+            )
+            bulk_jobs.append(job)
+        
+        start_time = time.time()
+        
+        # Bulk create many jobs
+        Job.objects.bulk_create(bulk_jobs)
+        
+        creation_time = (time.time() - start_time) * 1000
+        
+        # Test query performance with large dataset
+        query_start = time.time()
+        
+        total_jobs = Job.objects.count()
+        pending_jobs = Job.objects.filter(status=JobStatus.PENDING).count()
+        load_test_jobs = Job.objects.filter(input_data__load_test=True).count()
+        
+        query_time = (time.time() - query_start) * 1000
+        
+        # Verify system handles large dataset efficiently
+        self.assertLess(creation_time, 5000, f"Bulk creation time {creation_time}ms exceeds 5s threshold")
+        self.assertLess(query_time, 500, f"Query time {query_time}ms exceeds 500ms threshold")
+        
+        # Verify data integrity
+        self.assertGreaterEqual(total_jobs, 200)
+        self.assertGreaterEqual(pending_jobs, 200)
+        self.assertEqual(load_test_jobs, 200)
+    
+    @patch('guideline_ingestion.jobs.tasks.process_guidelines_with_gpt')
+    def test_queue_performance_under_high_load(self, mock_gpt_process):
+        """Test queue performance with high load of job submissions."""
+        # Mock fast GPT processing
+        mock_gpt_process.return_value = {
+            'summary': 'High load test summary',
+            'checklist': [{'id': 1, 'title': 'Load test', 'description': 'Test', 'priority': 'medium', 'category': 'load'}]
+        }
+        
+        import concurrent.futures
+        import threading
+        
+        response_times = []
+        success_count = 0
+        error_count = 0
+        
+        def submit_job(job_id):
+            """Submit a single job and measure response time."""
+            try:
+                start_time = time.time()
+                response = self.client.post(
+                    self.create_url,
+                    data=json.dumps({
+                        'guidelines': f'High load test job {job_id}',
+                        'priority': 'normal',
+                        'metadata': {'load_test': True, 'job_id': job_id}
+                    }),
+                    content_type='application/json'
+                )
+                response_time = (time.time() - start_time) * 1000
+                
+                if response.status_code == status.HTTP_201_CREATED:
+                    return 'success', response_time
+                else:
+                    return 'error', response_time
+            except Exception as e:
+                return 'exception', 0
+        
+        # Submit 50 jobs concurrently to test queue performance
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(submit_job, i) for i in range(50)]
+            results = [future.result() for future in concurrent.futures.as_completed(futures)]
+        
+        # Analyze results
+        for result_type, response_time in results:
+            if result_type == 'success':
+                success_count += 1
+                response_times.append(response_time)
+            else:
+                error_count += 1
+        
+        # Verify performance under high load
+        success_rate = success_count / len(results)
+        self.assertGreater(success_rate, 0.95, f"Success rate {success_rate:.2%} below 95% threshold")
+        
+        if response_times:
+            avg_response_time = sum(response_times) / len(response_times)
+            max_response_time = max(response_times)
+            
+            # Allow higher response times under high load, but within reason
+            self.assertLess(avg_response_time, 500, f"Average response time {avg_response_time}ms exceeds 500ms")
+            self.assertLess(max_response_time, 1000, f"Max response time {max_response_time}ms exceeds 1s")
+        
+        # Verify jobs were queued successfully
+        load_test_jobs = Job.objects.filter(input_data__metadata__load_test=True).count()
+        self.assertGreaterEqual(load_test_jobs, success_count)

@@ -241,21 +241,6 @@ class TestJobCreateView(APITestCase):
         self.assertIsInstance(call_args[0], int)  # job.id
         self.assertEqual(call_args[1], self.valid_payload['guidelines'])
     
-    def test_job_create_response_time_performance(self):
-        """Test that job creation responds within 200ms requirement."""
-        start_time = time.time()
-        
-        response = self.client.post(
-            self.url,
-            data=json.dumps(self.valid_payload),
-            content_type='application/json'
-        )
-        
-        end_time = time.time()
-        response_time_ms = (end_time - start_time) * 1000
-        
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertLess(response_time_ms, 200, f"Response time {response_time_ms}ms exceeds 200ms requirement")
     
     def test_job_create_concurrent_requests(self):
         """Test handling of concurrent job creation requests."""
@@ -440,19 +425,6 @@ class TestJobRetrieveView(APITestCase):
         self.assertFalse(response_data['success'])
         self.assertEqual(response_data['error']['code'], 'INVALID_UUID')
     
-    def test_job_retrieve_response_time_performance(self):
-        """Test that job retrieval responds within 100ms requirement."""
-        url = reverse('jobs:job-retrieve', kwargs={'event_id': self.completed_job.event_id})
-        
-        start_time = time.time()
-        
-        response = self.client.get(url)
-        
-        end_time = time.time()
-        response_time_ms = (end_time - start_time) * 1000
-        
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertLess(response_time_ms, 100, f"Response time {response_time_ms}ms exceeds 100ms requirement")
 
 
 class TestJobAPIErrorHandling(APITestCase):
