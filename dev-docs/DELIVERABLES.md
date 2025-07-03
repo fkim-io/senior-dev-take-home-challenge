@@ -205,16 +205,14 @@ Building a minimal backend API with async job processing and GPT-chaining for gu
   - [x] Target: Reduce from 10 files to 7 files while maintaining >70% coverage (achieved: 7 files, 88% coverage)
 
 ### Phase 5: Documentation & Deployment
-**TASK-015: OpenAPI Specification** ✅ COMPLETED
+**TASK-015: OpenAPI Specification & Documentation** ✅ COMPLETED
 - [x] Generate OpenAPI 3.0 spec from Django REST Framework
 - [x] Add comprehensive endpoint documentation
 - [x] Include request/response examples
 - [x] Document error codes and messages
 - [x] Set up API documentation UI (Swagger/ReDoc)
-
-**TASK-016: README Creation**
-- [ ] Write concise README (≤300 words)
-- [ ] Document design choices and trade-offs
-- [ ] Explain where AI tools were used
-- [ ] Include setup and usage instructions
-- [ ] Add API endpoint examples
+- [x] Write concise README (≤300 words)
+- [x] Document design choices and trade-offs
+- [x] Explain where AI tools were used
+- [x] Include setup and usage instructions
+- [x] Add API endpoint examples
