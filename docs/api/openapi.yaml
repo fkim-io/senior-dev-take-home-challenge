@@ -1,20 +1,24 @@
 openapi: 3.0.3
 info:
   title: Guideline Ingestion API
-  description: |
+  version: 1.0.0
+  description: |-
     REST API for asynchronous guideline processing with GPT-powered summarization and checklist generation.
-    
+
     ## Key Features
     - Sub-200ms job submission endpoint
     - Real-time job status tracking
     - Two-step GPT processing chain: summarize → generate checklist
     - Comprehensive error handling and validation
-    
+
     ## Performance
     - POST /jobs: <200ms response time (95th percentile)
     - GET /jobs/{event_id}: <100ms response time (95th percentile)
     - Concurrent job processing with horizontal scaling
-  version: "1.0.0"
+
+    ## Authentication
+    Currently no authentication required for development.
+    Production deployment will include API key authentication.
   contact:
     name: API Support
     email: support@guideline-ingestion.com
@@ -22,643 +26,183 @@ info:
   license:
     name: MIT License
     url: https://opensource.org/licenses/MIT
-
-servers:
-  - url: https://api.guideline-ingestion.com/v1
-    description: Production server
-  - url: https://staging-api.guideline-ingestion.com/v1
-    description: Staging server
-  - url: http://localhost:8000/v1
-    description: Local development server
-
 paths:
-  /jobs:
-    post:
-      summary: Submit guideline processing job
-      description: |
-        Submits guideline text for asynchronous processing through a two-step GPT chain:
-        1. Summarization of input guidelines
-        2. Generation of actionable checklist from summary
-        
-        The endpoint responds immediately with a job identifier while processing continues in the background.
-      operationId: submitJob
-      tags:
-        - Jobs
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JobSubmissionRequest'
-            examples:
-              basic_request:
-                summary: Basic guideline submission
-                value:
-                  guidelines: "Ensure all user data is encrypted using AES-256 encryption. Implement role-based access control for all API endpoints. Use HTTPS for all data transmission. Store passwords using bcrypt with minimum 12 rounds."
-              with_callback:
-                summary: Request with callback URL
-                value:
-                  guidelines: "All database queries must use parameterized statements to prevent SQL injection. Implement input validation on all user inputs. Log all security events for audit purposes."
-                  callback_url: "https://client.example.com/webhooks/job-completed"
-                  priority: "high"
-                  metadata:
-                    client_id: "client_123"
-                    project: "security_audit"
-      responses:
-        '201':
-          description: Job successfully submitted and queued for processing
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobSubmissionResponse'
-              examples:
-                success_response:
-                  value:
-                    success: true
-                    data:
-                      event_id: "550e8400-e29b-41d4-a716-446655440000"
-                      status: "PENDING"
-                      created_at: "2024-01-15T10:30:00Z"
-                      estimated_completion: "2024-01-15T10:31:30Z"
-                    message: "Job submitted successfully"
-        '400':
-          description: Bad request - validation errors
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              examples:
-                validation_error:
-                  value:
-                    success: false
-                    error:
-                      code: "VALIDATION_ERROR"
-                      message: "Request validation failed"
-                      details:
-                        field_errors:
-                          guidelines: ["This field is required"]
-                          callback_url: ["Invalid URL format"]
-                      timestamp: "2024-01-15T10:30:00Z"
-                      request_id: "req_550e8400e29b41d4a716446655440000"
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '429':
-          $ref: '#/components/responses/RateLimitError'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailableError'
-
-  /jobs/{event_id}:
+  /health/:
     get:
-      summary: Get job status and results
-      description: |
-        Retrieves the current status of a submitted job and returns results if processing is complete.
-        
-        Possible statuses:
-        - PENDING: Job is queued and waiting for processing
-        - PROCESSING: Job is currently being processed by a worker
-        - COMPLETED: Job completed successfully with results available
-        - FAILED: Job failed due to an error
-      operationId: getJobStatus
+      operationId: health_check
+      description: Check the health status of the application and its dependencies.
+        Used by container orchestration systems to determine if the service is healthy.
+      summary: Health check endpoint
       tags:
-        - Jobs
-      parameters:
-        - name: event_id
-          in: path
-          required: true
-          description: Unique identifier for the job
-          schema:
-            type: string
-            format: uuid
-            example: "550e8400-e29b-41d4-a716-446655440000"
-      responses:
-        '200':
-          description: Job status retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobStatusResponse'
-              examples:
-                completed_job:
-                  summary: Completed job with results
-                  value:
-                    success: true
-                    data:
-                      event_id: "550e8400-e29b-41d4-a716-446655440000"
-                      status: "COMPLETED"
-                      created_at: "2024-01-15T10:30:00Z"
-                      updated_at: "2024-01-15T10:31:45Z"
-                      processing_time_seconds: 75.2
-                      result:
-                        summary: "The guidelines focus on security best practices including encryption, access control, and audit logging..."
-                        checklist:
-                          - id: 1
-                            title: "Verify data encryption standards"
-                            description: "Ensure all sensitive data uses AES-256 encryption"
-                            priority: "high"
-                            category: "security"
-                          - id: 2
-                            title: "Implement access controls"
-                            description: "Configure role-based access control for all endpoints"
-                            priority: "medium"
-                            category: "security"
-                      metadata:
-                        gpt_model_used: "gpt-4"
-                        tokens_consumed: 1250
-                        processing_steps: ["summarization", "checklist_generation"]
-                pending_job:
-                  summary: Job still pending
-                  value:
-                    success: true
-                    data:
-                      event_id: "550e8400-e29b-41d4-a716-446655440000"
-                      status: "PENDING"
-                      created_at: "2024-01-15T10:30:00Z"
-                      estimated_completion: "2024-01-15T10:31:30Z"
-                      queue_position: 3
-                processing_job:
-                  summary: Job currently processing
-                  value:
-                    success: true
-                    data:
-                      event_id: "550e8400-e29b-41d4-a716-446655440000"
-                      status: "PROCESSING"
-                      created_at: "2024-01-15T10:30:00Z"
-                      started_at: "2024-01-15T10:30:15Z"
-                      current_step: "summarization"
-                      progress_percentage: 45
-                failed_job:
-                  summary: Job failed with error
-                  value:
-                    success: true
-                    data:
-                      event_id: "550e8400-e29b-41d4-a716-446655440000"
-                      status: "FAILED"
-                      created_at: "2024-01-15T10:30:00Z"
-                      failed_at: "2024-01-15T10:30:45Z"
-                      error:
-                        code: "GPT_API_ERROR"
-                        message: "OpenAI API rate limit exceeded"
-                        retry_after: "2024-01-15T10:35:00Z"
-                        support_reference: "ERR-2024-001"
-        '404':
-          description: Job not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              examples:
-                job_not_found:
-                  value:
-                    success: false
-                    error:
-                      code: "JOB_NOT_FOUND"
-                      message: "Job with specified event_id not found"
-                      details: "Verify the event_id is correct and the job exists"
-                      timestamp: "2024-01-15T10:30:00Z"
-                      request_id: "req_550e8400e29b41d4a716446655440000"
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '429':
-          $ref: '#/components/responses/RateLimitError'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /health:
-    get:
-      summary: Service health check
-      description: Returns the overall health status of the service and its dependencies
-      operationId: healthCheck
-      tags:
-        - Health
+      - Health
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
       responses:
         '200':
           description: Service is healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [healthy, degraded]
-                  timestamp:
-                    type: string
-                    format: date-time
-                  services:
-                    type: object
-                    properties:
-                      database:
-                        type: string
-                        enum: [healthy, unhealthy]
-                      redis:
-                        type: string
-                        enum: [healthy, unhealthy]
-                      celery:
-                        type: string
-                        enum: [healthy, unhealthy]
-                      openai:
-                        type: string
-                        enum: [healthy, unhealthy]
         '503':
           description: Service is unhealthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [unhealthy]
-                  timestamp:
-                    type: string
-                    format: date-time
-                  errors:
-                    type: array
-                    items:
-                      type: string
-
+  /health/ready/:
+    get:
+      operationId: readiness_check
+      description: Check if the application is ready to handle requests. Used by container
+        orchestration systems to determine when to start routing traffic.
+      summary: Readiness check endpoint
+      tags:
+      - Health
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+  /jobs/:
+    post:
+      operationId: jobs_create
+      description: 'Submit guidelines for processing through the GPT chain. The job
+        will be queued for asynchronous processing and return an event_id for tracking.
+        **Performance requirement**: <200ms response time (95th percentile).'
+      summary: Create new job for guideline processing
+      tags:
+      - Jobs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+            examples:
+              BasicJobSubmission:
+                value:
+                  guidelines: Patient care guidelines for emergency room triage procedures.
+                    Patients with chest pain should be immediately assessed for cardiac
+                    symptoms.
+                summary: Basic Job Submission
+              JobWithCallbackAndMetadata:
+                value:
+                  guidelines: Healthcare protocol for medication administration. All
+                    medications must be double-checked before administration.
+                  callback_url: https://example.com/webhooks/job-completed
+                  priority: high
+                  metadata:
+                    department: cardiology
+                    version: '2.1'
+                    requester: dr.smith@hospital.com
+                summary: Job with Callback and Metadata
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '201':
+          description: Job created successfully
+        '400':
+          description: Validation error
+        '429':
+          description: Rate limit exceeded
+        '500':
+          description: Internal server error
+  /jobs/{event_id}/:
+    get:
+      operationId: jobs_retrieve
+      description: 'Retrieve the current status and results of a job by its event_id.
+        Response fields vary based on job status (PENDING, PROCESSING, COMPLETED,
+        FAILED). **Performance requirement**: <100ms response time (95th percentile).'
+      summary: Retrieve job status and results
+      parameters:
+      - in: path
+        name: event_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Jobs
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: Job retrieved successfully
+        '400':
+          description: Invalid event_id format
+        '404':
+          description: Job not found
+        '500':
+          description: Internal server error
 components:
   schemas:
-    JobSubmissionRequest:
+    JobCreateRequest:
       type: object
-      required:
-        - guidelines
+      description: |-
+        Serializer for job creation requests with comprehensive validation.
+
+        Handles guideline submission for asynchronous processing through the GPT chain.
+        Validates input constraints and prepares data for job creation.
       properties:
         guidelines:
           type: string
           minLength: 10
+          description: 'Guideline text content to be processed through the GPT chain.
+            Must be between 10-10,000 characters. Supports plain text format. Examples:
+            medical protocols, safety procedures, compliance guidelines.'
           maxLength: 10000
-          description: Guideline text to be processed (10-10,000 characters)
-          example: "Ensure all user data is encrypted using AES-256 encryption. Implement role-based access control for all API endpoints."
         callback_url:
           type: string
           format: uri
-          pattern: "^https://"
-          description: Optional HTTPS URL for job completion notification
-          example: "https://client.example.com/webhooks/job-completed"
+          description: Optional HTTPS callback URL for job completion notification.
+            Must use HTTPS protocol for security. Will receive POST request with job
+            results when processing completes.
         priority:
-          type: string
-          enum: [low, normal, high]
+          allOf:
+          - $ref: '#/components/schemas/PriorityEnum'
           default: normal
-          description: Job processing priority
+          description: |-
+            Processing priority level. High priority jobs are processed first, normal is default, low priority jobs are processed when resources are available.
+
+            * `low` - low
+            * `normal` - normal
+            * `high` - high
         metadata:
-          type: object
-          maxProperties: 10
-          description: Optional key-value pairs for client tracking (max 10 pairs, total size < 1KB)
-          additionalProperties:
-            type: string
-          example:
-            client_id: "client_123"
-            project: "security_audit"
-
-    JobSubmissionResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          type: object
-          properties:
-            event_id:
-              type: string
-              format: uuid
-              description: Unique identifier for tracking the job
-              example: "550e8400-e29b-41d4-a716-446655440000"
-            status:
-              type: string
-              enum: [PENDING]
-              description: Initial job status
-            created_at:
-              type: string
-              format: date-time
-              description: Job creation timestamp
-              example: "2024-01-15T10:30:00Z"
-            estimated_completion:
-              type: string
-              format: date-time
-              description: Estimated completion time
-              example: "2024-01-15T10:31:30Z"
-        message:
-          type: string
-          example: "Job submitted successfully"
-
-    JobStatusResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          oneOf:
-            - $ref: '#/components/schemas/PendingJob'
-            - $ref: '#/components/schemas/ProcessingJob'
-            - $ref: '#/components/schemas/CompletedJob'
-            - $ref: '#/components/schemas/FailedJob'
-
-    BaseJob:
-      type: object
-      properties:
-        event_id:
-          type: string
-          format: uuid
-          example: "550e8400-e29b-41d4-a716-446655440000"
-        status:
-          type: string
-          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
-        created_at:
-          type: string
-          format: date-time
-          example: "2024-01-15T10:30:00Z"
-
-    PendingJob:
-      allOf:
-        - $ref: '#/components/schemas/BaseJob'
-        - type: object
-          properties:
-            status:
-              type: string
-              enum: [PENDING]
-            estimated_completion:
-              type: string
-              format: date-time
-              example: "2024-01-15T10:31:30Z"
-            queue_position:
-              type: integer
-              minimum: 1
-              description: Position in the processing queue
-              example: 3
-
-    ProcessingJob:
-      allOf:
-        - $ref: '#/components/schemas/BaseJob'
-        - type: object
-          properties:
-            status:
-              type: string
-              enum: [PROCESSING]
-            started_at:
-              type: string
-              format: date-time
-              example: "2024-01-15T10:30:15Z"
-            current_step:
-              type: string
-              enum: [summarization, checklist_generation]
-              description: Current processing step
-            progress_percentage:
-              type: integer
-              minimum: 0
-              maximum: 100
-              description: Processing progress percentage
-              example: 45
-
-    CompletedJob:
-      allOf:
-        - $ref: '#/components/schemas/BaseJob'
-        - type: object
-          properties:
-            status:
-              type: string
-              enum: [COMPLETED]
-            updated_at:
-              type: string
-              format: date-time
-              example: "2024-01-15T10:31:45Z"
-            processing_time_seconds:
-              type: number
-              format: float
-              minimum: 0
-              description: Total processing time in seconds
-              example: 75.2
-            result:
-              $ref: '#/components/schemas/JobResult'
-            metadata:
-              $ref: '#/components/schemas/JobMetadata'
-
-    FailedJob:
-      allOf:
-        - $ref: '#/components/schemas/BaseJob'
-        - type: object
-          properties:
-            status:
-              type: string
-              enum: [FAILED]
-            failed_at:
-              type: string
-              format: date-time
-              example: "2024-01-15T10:30:45Z"
-            error:
-              $ref: '#/components/schemas/JobError'
-
-    JobResult:
-      type: object
-      properties:
-        summary:
-          type: string
-          description: GPT-generated summary of the input guidelines
-          example: "The guidelines focus on security best practices including data encryption, access control, and audit logging requirements."
-        checklist:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChecklistItem'
-          description: Generated actionable checklist items
-
-    ChecklistItem:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: Unique identifier for the checklist item
-          example: 1
-        title:
-          type: string
-          description: Brief title for the checklist item
-          example: "Verify data encryption standards"
-        description:
-          type: string
-          description: Detailed description of the action required
-          example: "Ensure all sensitive data uses AES-256 encryption"
-        priority:
-          type: string
-          enum: [low, medium, high, critical]
-          description: Priority level for the checklist item
-          example: "high"
-        category:
-          type: string
-          description: Category classification for the item
-          example: "security"
-
-    JobMetadata:
-      type: object
-      properties:
-        gpt_model_used:
-          type: string
-          description: OpenAI model used for processing
-          example: "gpt-4"
-        tokens_consumed:
-          type: integer
-          description: Total tokens consumed during processing
-          example: 1250
-        processing_steps:
-          type: array
-          items:
-            type: string
-          description: List of completed processing steps
-          example: ["summarization", "checklist_generation"]
-
-    JobError:
-      type: object
-      properties:
-        code:
-          type: string
-          description: Error code for programmatic handling
-          example: "GPT_API_ERROR"
-        message:
-          type: string
-          description: Human-readable error message
-          example: "OpenAI API rate limit exceeded"
-        retry_after:
-          type: string
-          format: date-time
-          description: Earliest time to retry the job
-          example: "2024-01-15T10:35:00Z"
-        support_reference:
-          type: string
-          description: Support reference ID for troubleshooting
-          example: "ERR-2024-001"
-
-    ErrorResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              description: Machine-readable error code
-              example: "VALIDATION_ERROR"
-            message:
-              type: string
-              description: Human-readable error message
-              example: "Request validation failed"
-            details:
-              description: Additional error context
-              oneOf:
-                - type: string
-                - type: object
-            timestamp:
-              type: string
-              format: date-time
-              example: "2024-01-15T10:30:00Z"
-            request_id:
-              type: string
-              description: Unique identifier for the request
-              example: "req_550e8400e29b41d4a716446655440000"
-        data:
-          type: "null"
-
-  responses:
-    UnauthorizedError:
-      description: Authentication required
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "AUTH_ERROR"
-              message: "Authentication required"
-              details: "Valid API key must be provided in Authorization header"
-              timestamp: "2024-01-15T10:30:00Z"
-              request_id: "req_550e8400e29b41d4a716446655440000"
-
-    RateLimitError:
-      description: Rate limit exceeded
-      content:
-        application/json:
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ErrorResponse'
-              - type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      retry_after:
-                        type: integer
-                        description: Seconds to wait before retrying
-          example:
-            success: false
-            error:
-              code: "RATE_LIMIT_EXCEEDED"
-              message: "Rate limit exceeded"
-              details: "Maximum 100 requests per minute allowed"
-              retry_after: 45
-              timestamp: "2024-01-15T10:30:00Z"
-              request_id: "req_550e8400e29b41d4a716446655440000"
-
-    InternalServerError:
-      description: Internal server error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "INTERNAL_ERROR"
-              message: "An unexpected error occurred"
-              details: "Please try again later or contact support"
-              support_reference: "ERR-2024-001"
-              timestamp: "2024-01-15T10:30:00Z"
-              request_id: "req_550e8400e29b41d4a716446655440000"
-
-    ServiceUnavailableError:
-      description: Service temporarily unavailable
-      content:
-        application/json:
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ErrorResponse'
-              - type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      retry_after:
-                        type: integer
-                        description: Seconds to wait before retrying
-          example:
-            success: false
-            error:
-              code: "SERVICE_OVERLOADED"
-              message: "Service temporarily overloaded"
-              details: "Queue is at capacity, please try again in a few minutes"
-              retry_after: 120
-              timestamp: "2024-01-15T10:30:00Z"
-              request_id: "req_550e8400e29b41d4a716446655440000"
-
+          description: 'Optional metadata as key-value pairs for client tracking.
+            Maximum 10 keys, total size limit 1KB. Common uses: department, version,
+            requester_id, tags.'
+      required:
+      - guidelines
+    PriorityEnum:
+      enum:
+      - low
+      - normal
+      - high
+      type: string
+      description: |-
+        * `low` - low
+        * `normal` - normal
+        * `high` - high
   securitySchemes:
-    ApiKeyAuth:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
       type: apiKey
-      in: header
-      name: Authorization
-      description: |
-        API key authentication using Bearer token format.
-        
-        Example: `Authorization: Bearer your_api_key_here`
-
-security:
-  - ApiKeyAuth: []
-
-tags:
-  - name: Jobs
-    description: Job submission and status management
-  - name: Health
-    description: Service health and monitoring endpoints 
+      in: cookie
+      name: sessionid
+servers:
+- url: http://localhost:8000
+  description: Local development server
+- url: https://staging-api.guideline-ingestion.com
+  description: Staging server
+- url: https://api.guideline-ingestion.com
+  description: Production server
