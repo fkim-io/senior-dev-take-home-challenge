@@ -91,4 +91,4 @@ cover/
 .python-version
 
 # redis dumps
-dump.rdb
+dump.rdbdev-docs/
