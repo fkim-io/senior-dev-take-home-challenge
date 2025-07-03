@@ -1,0 +1,44 @@
+[run]
+source = guideline_ingestion
+omit = 
+    */venv/*
+    */migrations/*
+    */tests/*
+    */test_*.py
+    */__pycache__/*
+    manage.py
+    */settings/*
+    */config/wsgi.py
+    */config/asgi.py
+    */config/__init__.py
+    */node_modules/*
+    */static/*
+    */media/*
+    htmlcov/*
+    .pytest_cache/*
+    .coverage
+branch = True
+parallel = True
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+    @overload
+    class .*\bProtocol\):
+    class .*\bProtocol\b.*\):
+show_missing = True
+skip_covered = False
+precision = 2
+
+[html]
+directory = htmlcov
+title = Guideline Ingestion Coverage Report
+
+[xml]
+output = coverage.xml
