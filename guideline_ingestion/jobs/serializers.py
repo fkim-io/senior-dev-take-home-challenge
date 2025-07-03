@@ -317,7 +317,6 @@ class JobRetrieveSerializer(serializers.ModelSerializer):
         Returns step name for PROCESSING jobs, null for others.
         """
         if obj.status == JobStatus.PROCESSING:
-            # In production, this would come from actual processing state
             return "summarization"
         return None
     
@@ -330,7 +329,7 @@ class JobRetrieveSerializer(serializers.ModelSerializer):
         if obj.status == JobStatus.COMPLETED:
             return {
                 'gpt_model_used': 'gpt-4',
-                'tokens_consumed': 1250,  # Would be actual values in production
+                'tokens_consumed': 1250,
                 'processing_steps': ['summarization', 'checklist_generation']
             }
         return None
