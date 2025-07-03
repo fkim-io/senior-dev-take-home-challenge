@@ -346,6 +346,92 @@ def test_concurrent_status_updates():
     assert sum(results) == 1, "Multiple workers claimed the same job"
 ```
 
+## Django Setup Validation Standards
+
+### Required Configuration Tests
+All Django projects MUST include setup validation tests covering:
+
+```python
+# Required test categories for Django setup
+@pytest.mark.unit
+class TestDjangoConfiguration:
+    """Validate Django project configuration."""
+    
+    def test_settings_module_loads(self):
+        """Django settings load without errors."""
+        
+    def test_required_apps_installed(self):
+        """All required apps in INSTALLED_APPS."""
+        
+    def test_middleware_configuration(self):
+        """Middleware stack properly configured."""
+        
+    def test_database_configuration(self):
+        """Database settings valid and environment-aware."""
+
+@pytest.mark.integration  
+class TestDatabaseConnectivity:
+    """Validate database integration in Docker."""
+    
+    def test_database_connection_works(self, db):
+        """Database connection functional."""
+        
+    def test_database_operations(self, db):
+        """Basic CRUD operations work."""
+        
+    def test_database_transaction_support(self, db):
+        """Transaction rollback works correctly."""
+
+@pytest.mark.unit
+class TestDjangoRESTFrameworkSetup:
+    """Validate DRF configuration."""
+    
+    def test_drf_installed_and_configured(self):
+        """DRF properly installed and configured."""
+        
+    def test_drf_spectacular_configured(self):
+        """OpenAPI generation configured."""
+        
+    def test_drf_pagination_configured(self):
+        """Pagination settings configured."""
+```
+
+### Environment-Aware Testing
+Django setup tests MUST handle different environments:
+
+```python
+def test_environment_aware_configuration(self):
+    """Test configuration adapts to environment."""
+    from django.conf import settings
+    
+    # Testing environment specific checks
+    if settings.IS_TESTING:
+        assert settings.CELERY_TASK_ALWAYS_EAGER is True
+        assert 'memory://' in settings.CELERY_BROKER_URL or 'redis://' in settings.CELERY_BROKER_URL
+    
+    # Production environment specific checks  
+    if settings.IS_PRODUCTION:
+        assert settings.DEBUG is False
+        assert 'django-insecure' not in settings.SECRET_KEY
+```
+
+### Django Admin and Health Endpoint Validation
+```python
+def test_admin_urls_accessible(self):
+    """Test admin URLs are configured."""
+    from django.urls import reverse
+    admin_url = reverse('admin:index')
+    assert admin_url is not None
+
+def test_health_check_urls_accessible(self):
+    """Test health check URLs are configured."""
+    from django.urls import reverse
+    health_url = reverse('health')
+    readiness_url = reverse('readiness')
+    assert health_url is not None
+    assert readiness_url is not None
+```
+
 ## DRF Best Practices
 - Use class-based views for consistency
 - Implement proper permissions and authentication (if required)

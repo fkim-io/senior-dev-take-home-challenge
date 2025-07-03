@@ -168,6 +168,28 @@ docker compose exec app /app/test-docker.sh --cov-report=html
 # Run specific test categories
 docker compose exec app /app/test-docker.sh -m unit
 docker compose exec app /app/test-docker.sh -m integration
+
+# Run Django setup validation tests
+docker compose exec app /app/test-docker.sh jobs/tests/test_django_setup.py
+```
+
+## Django Project Standards
+- **Setup Validation**: Every Django project MUST include comprehensive setup tests
+- **Environment Awareness**: Configuration MUST adapt to development/testing/production environments
+- **Docker Integration**: All setup validation MUST pass in containerized environment
+- **Admin Access**: Django admin MUST be accessible and functional
+- **Health Endpoints**: MUST include `/health/` and `/health/ready/` endpoints
+
+### Required Django Setup Tests
+```python
+# Minimum required test coverage for Django setup
+TestDjangoConfiguration       # Settings, apps, middleware validation
+TestDatabaseConnectivity      # Database integration in Docker
+TestDjangoRESTFrameworkSetup  # DRF and OpenAPI configuration
+TestCeleryIntegration        # Task queue integration
+TestURLConfiguration         # URL routing and admin access
+TestApplicationStartup       # App loading and performance
+TestPerformanceConfiguration # Connection pooling and optimization
 ```
 
 ## Code Quality Standards

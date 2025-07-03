@@ -157,12 +157,15 @@ DATABASES = {
 ### Step 4.1: Run Full Test Suite
 ```bash
 # Ensure your changes don't break existing functionality (in Docker)
-docker compose exec app pytest
-docker compose exec app coverage report
+docker compose exec app /app/test-docker.sh
+docker compose exec app /app/test-docker.sh --cov-report=html
 
 # Verify coverage stays above 70%
 # Fix any broken tests from other modules
 # All tests run in containerized environment for consistency
+
+# For Django setup tasks, verify setup validation tests
+docker compose exec app /app/test-docker.sh jobs/tests/test_django_setup.py
 ```
 
 ### Step 4.2: Test Integration Points

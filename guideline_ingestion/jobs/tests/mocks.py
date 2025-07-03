@@ -267,10 +267,17 @@ def mock_redis_client():
 def mock_celery_task(task_id=None, result=None, status='SUCCESS'):
     """Context manager for mocking Celery tasks."""
     mock_task = MockCeleryTask(task_id, result, status)
-    with patch('jobs.tasks.process_job') as mock_process_job:
-        mock_process_job.delay = mock_task.delay
-        mock_process_job.apply_async = mock_task.apply_async
-        yield mock_task
+    try:
+        with patch('jobs.tasks.process_job') as mock_process_job:
+            mock_process_job.delay = mock_task.delay
+            mock_process_job.apply_async = mock_task.apply_async
+            yield mock_task
+    except AttributeError:
+        # process_job task doesn't exist yet, create a mock module-level patch
+        with patch('jobs.tasks.process_job', create=True) as mock_process_job:
+            mock_process_job.delay = mock_task.delay
+            mock_process_job.apply_async = mock_task.apply_async
+            yield mock_task
 
 
 @contextmanager

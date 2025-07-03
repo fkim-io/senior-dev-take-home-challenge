@@ -239,6 +239,53 @@ def mock_openai_responses():
 
 ## TDD Test Patterns
 
+### Django Setup Testing Pattern
+```python
+class TestDjangoConfiguration:
+    """Test Django project configuration and setup."""
+    
+    @pytest.mark.unit
+    def test_settings_module_loads(self):
+        """Test Django settings module loads without errors."""
+        from django.conf import settings
+        assert settings.configured
+        assert hasattr(settings, 'SECRET_KEY')
+        assert hasattr(settings, 'DATABASES')
+    
+    @pytest.mark.unit
+    def test_required_apps_installed(self):
+        """Test all required Django apps are installed."""
+        from django.conf import settings
+        required_apps = [
+            'django.contrib.admin',
+            'rest_framework',
+            'drf_spectacular',
+            'jobs',
+        ]
+        for app in required_apps:
+            assert app in settings.INSTALLED_APPS
+    
+    @pytest.mark.integration
+    def test_database_connectivity(self, db):
+        """Test database connection works in container."""
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+            assert result[0] == 1
+    
+    @pytest.mark.unit
+    def test_environment_aware_configuration(self):
+        """Test configuration adapts to environment."""
+        from django.conf import settings
+        assert hasattr(settings, 'ENVIRONMENT')
+        assert hasattr(settings, 'IS_TESTING')
+        
+        # Tests should run in testing environment
+        if settings.IS_TESTING:
+            assert settings.CELERY_TASK_ALWAYS_EAGER is True
+```
+
 ### Model Testing Pattern
 ```python
 class TestJobModel:
