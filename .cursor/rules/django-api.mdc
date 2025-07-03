@@ -353,6 +353,7 @@ def test_concurrent_status_updates():
 - Leverage DRF's built-in pagination
 - Use viewsets for CRUD operations when appropriate
 - Implement proper logging for debugging
+=======
 ### Response Time Requirements
 - **POST /jobs**: <200ms total (validation: <10ms, DB write: <50ms, queue: <20ms)
 - **GET /jobs/{event_id}**: <100ms total (DB query: <30ms, serialization: <20ms)
@@ -445,4 +446,3 @@ urlpatterns = [
 - Never expose internal error details to clients
 - Log full error context for debugging
 - Provide actionable error messages
-
