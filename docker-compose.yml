@@ -55,7 +55,10 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: sh -c "cd guideline_ingestion && celery -A config worker --loglevel=info"
+    working_dir: /app/guideline_ingestion
+    environment:
+      - PYTHONPATH=/app/guideline_ingestion
+    command: sh -c "celery -A config.celery worker --loglevel=info"
 
 volumes:
   postgres_data:
