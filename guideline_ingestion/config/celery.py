@@ -44,6 +44,8 @@ app.conf.update(
     worker_max_memory_per_child=200000,  # 200MB memory limit per worker
     task_compression='gzip',
     result_compression='gzip',
+    # Fix for Celery 6.0 deprecation warning
+    broker_connection_retry_on_startup=True,
     task_routes={
         'guideline_ingestion.jobs.tasks.process_guideline_job': {'queue': 'gpt_processing'},
         'guideline_ingestion.jobs.tasks.cleanup_old_jobs': {'queue': 'maintenance'},
