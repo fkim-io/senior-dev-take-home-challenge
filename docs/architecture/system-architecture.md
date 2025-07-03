@@ -23,9 +23,17 @@ This document outlines the system architecture for the Django-based guideline in
 
 **Key Components**:
 - `JobCreateView`: Handles POST /jobs requests
-- `JobDetailView`: Handles GET /jobs/{event_id} requests
+- `JobRetrieveView`: Handles GET /jobs/{event_id} requests
 - `JobSerializer`: Request/response data validation
+- `CaseInsensitiveUUIDConverter`: Custom URL converter for flexible UUID handling
+- Health check endpoints (`/health/`, `/health/ready/`)
+- OpenAPI specification generation (available at `/api/docs/`)
 - Middleware for logging and monitoring
+
+**API Documentation**:
+- Interactive API documentation available at `/api/docs/`
+- OpenAPI 3.0 specification in `docs/api/openapi.yaml`
+- Comprehensive examples and error schemas included
 
 ### 2. Message Queue (Redis)
 **Technology**: Redis 7.2+ as Celery broker and result backend

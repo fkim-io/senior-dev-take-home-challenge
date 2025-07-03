@@ -65,8 +65,8 @@ GET /jobs/{event_id}
 
 #### Queue Layer (Redis + Celery)
 ```python
-# Task Definition
-@celery.task(bind=True, max_retries=3)
+# Task Definition with Queue Routing
+@shared_task(bind=True, autoretry_for=(TemporaryProcessingError,), retry_kwargs={'max_retries': 3})
 def process_guideline_job(self, job_id, guideline_text):
     try:
         # Update status to PROCESSING
@@ -74,6 +74,13 @@ def process_guideline_job(self, job_id, guideline_text):
         # Store results and mark COMPLETED
     except Exception as exc:
         # Retry logic or mark FAILED
+
+# Queue Routing Configuration
+task_routes = {
+    'guideline_ingestion.jobs.tasks.process_guideline_job': {'queue': 'gpt_processing'},
+    'guideline_ingestion.jobs.tasks.cleanup_old_jobs': {'queue': 'maintenance'},
+    'guideline_ingestion.jobs.tasks.monitor_job_health': {'queue': 'monitoring'},
+}
 ```
 
 #### Worker Layer (Celery Workers)
@@ -319,6 +326,45 @@ def process_job(job_id, guideline_text):
     except Exception as e:
         logger.error(f"Job processing failed: {job_id}, error: {str(e)}")
         raise
+```
+
+### 4. Background Monitoring Tasks
+
+```python
+# Cleanup Task (runs on 'maintenance' queue)
+@shared_task
+def cleanup_old_jobs(retention_days: int = 30):
+    """Remove old completed/failed jobs to prevent database bloat."""
+    cutoff_date = timezone.now() - timedelta(days=retention_days)
+    old_jobs = Job.objects.filter(
+        status__in=[JobStatus.COMPLETED, JobStatus.FAILED],
+        completed_at__lt=cutoff_date
+    )
+    deleted_count = old_jobs.count()
+    if deleted_count > 0:
+        old_jobs.delete()
+    return f"Cleanup completed: {deleted_count} jobs removed"
+
+# Health Monitoring Task (runs on 'monitoring' queue)
+@shared_task
+def monitor_job_health():
+    """Monitor job processing health and alert on issues."""
+    # Check for stuck jobs (processing >30 minutes)
+    stuck_jobs = Job.objects.filter(
+        status=JobStatus.PROCESSING,
+        started_at__lt=timezone.now() - timedelta(minutes=30)
+    )
+    
+    # Check failure rate in last hour
+    one_hour_ago = timezone.now() - timedelta(hours=1)
+    recent_jobs = Job.objects.filter(created_at__gte=one_hour_ago)
+    failed_jobs = recent_jobs.filter(status=JobStatus.FAILED)
+    
+    # Check queue backlog
+    pending_jobs = Job.objects.filter(status=JobStatus.PENDING).count()
+    
+    # Generate health report and alerts
+    return f"Health monitoring completed: {summary}"
 ```
 
 ## Best Practices
