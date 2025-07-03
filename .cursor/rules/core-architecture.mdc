@@ -94,6 +94,82 @@ guideline_ingestion/          # Django project root
 }
 ```
 
+## Testing Infrastructure Standards
+- **Test-Driven Development**: Red → Green → Refactor cycle for all features
+- **Docker-First Testing**: All tests run in containerized environment for consistency
+- **Coverage Requirements**: Maintain 70%+ test coverage with coverage.py
+- **Test Database Isolation**: Use separate test database with transaction rollback
+- **External Dependency Mocking**: Mock OpenAI API, Redis, and Celery for reliable tests
+
+### Testing Configuration
+```python
+# pytest.ini configuration
+[tool:pytest]
+DJANGO_SETTINGS_MODULE = config.test_settings
+testpaths = guideline_ingestion
+pythonpath = . guideline_ingestion
+addopts = --cov=guideline_ingestion --cov-report=html --cov-fail-under=70
+
+# Test settings (config/test_settings.py)
+CELERY_TASK_ALWAYS_EAGER = True  # Synchronous task execution
+CELERY_TASK_EAGER_PROPAGATES = True
+OPENAI_API_KEY = 'test-api-key'  # Mock API key for testing
+```
+
+### Test Structure Standards
+```
+jobs/tests/
+├── conftest.py          # Shared fixtures and test configuration
+├── factories.py         # Test data factories using factory_boy
+├── mocks.py            # Mock classes for external dependencies
+├── test_models.py      # Model unit tests
+├── test_views.py       # API endpoint tests
+├── test_tasks.py       # Celery task tests
+├── test_integration.py # End-to-end integration tests
+└── test_performance.py # Performance and load tests
+```
+
+### Mock Infrastructure Patterns
+```python
+# Mock OpenAI API for consistent testing
+class MockOpenAIClient:
+    def create_chat_completion(self, messages, **kwargs):
+        if 'summarize' in str(messages).lower():
+            return self._create_summary_response()
+        return self._create_checklist_response()
+
+# Context managers for easy mocking
+@contextmanager
+def mock_openai_client():
+    with patch('openai.OpenAI') as mock:
+        yield MockOpenAIClient()
+```
+
+### Performance Testing Standards
+```python
+def test_job_creation_performance(performance_timer):
+    """Verify POST /jobs responds in <200ms."""
+    performance_timer.start()
+    response = api_client.post('/jobs/', job_data)
+    performance_timer.stop()
+    
+    assert response.status_code == 201
+    assert performance_timer.elapsed_ms < 200
+```
+
+### Test Execution Commands
+```bash
+# Run tests in Docker environment
+docker compose exec app /app/test-docker.sh
+
+# Run with coverage reporting
+docker compose exec app /app/test-docker.sh --cov-report=html
+
+# Run specific test categories
+docker compose exec app /app/test-docker.sh -m unit
+docker compose exec app /app/test-docker.sh -m integration
+```
+
 ## Code Quality Standards
 - Follow PEP 8 with black formatting
 - Type hints for all functions

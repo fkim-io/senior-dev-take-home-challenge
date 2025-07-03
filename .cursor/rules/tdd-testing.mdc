@@ -1,0 +1,455 @@
+---
+description: Test-Driven Development (TDD) patterns and testing standards
+globs: "**/test_*.py", "**/tests/**/*.py", "pytest.ini", "conftest.py"
+alwaysApply: true
+---
+
+# Test-Driven Development (TDD) & Testing Standards
+
+## TDD Workflow Requirements
+All feature development MUST follow the Red → Green → Refactor cycle:
+
+1. **Red Phase**: Write failing tests that define expected behavior
+2. **Green Phase**: Write minimal code to make tests pass
+3. **Refactor Phase**: Improve code quality while maintaining test coverage
+
+## Testing Infrastructure Architecture
+
+### Test Structure Standards
+```
+jobs/tests/
+├── conftest.py          # Shared fixtures and pytest configuration
+├── factories.py         # Test data factories using factory_boy
+├── mocks.py            # Mock classes for external dependencies
+├── test_infrastructure.py  # Infrastructure and setup validation
+├── test_models.py      # Django model unit tests
+├── test_views.py       # API endpoint tests (DRF)
+├── test_serializers.py # DRF serializer validation tests
+├── test_tasks.py       # Celery task tests
+├── test_integration.py # End-to-end integration tests
+└── test_performance.py # Performance and load tests
+```
+
+### Test Configuration Standards
+
+#### pytest.ini Configuration
+```ini
+[tool:pytest]
+DJANGO_SETTINGS_MODULE = config.test_settings
+python_files = tests.py test_*.py *_tests.py
+python_classes = Test*
+python_functions = test_*
+testpaths = guideline_ingestion
+pythonpath = . guideline_ingestion
+django_find_project = false
+addopts = 
+    --verbose
+    --tb=short
+    --strict-markers
+    --strict-config
+    --cov=guideline_ingestion
+    --cov-report=html:htmlcov
+    --cov-report=term-missing
+    --cov-report=xml
+    --cov-config=.coveragerc
+    --cov-fail-under=70
+    --reuse-db
+    --nomigrations
+    --maxfail=3
+    --durations=10
+```
+
+#### Test Settings (config/test_settings.py)
+```python
+from .settings import *
+
+# Override environment for testing
+ENVIRONMENT = 'testing'
+IS_TESTING = True
+
+# Test database configuration
+DATABASES['default']['TEST'] = {'NAME': 'test_guideline_ingestion'}
+
+# Celery eager mode for synchronous testing
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_BROKER_URL = 'memory://'
+
+# Mock external services
+OPENAI_API_KEY = 'test-api-key'
+
+# Fast password hashing for tests
+PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+# Disable logging during tests
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {'null': {'class': 'logging.NullHandler'}},
+    'root': {'handlers': ['null']},
+}
+```
+
+## Test Categories and Markers
+
+### Test Markers
+```python
+# Use pytest markers to categorize tests
+@pytest.mark.unit          # Fast, isolated unit tests
+@pytest.mark.integration   # Tests with database/external services
+@pytest.mark.performance   # Performance and timing tests
+@pytest.mark.api           # API endpoint tests
+@pytest.mark.celery        # Celery task tests
+@pytest.mark.openai        # Tests requiring OpenAI mocking
+@pytest.mark.slow          # Slow tests (>1 second)
+```
+
+### Running Specific Test Categories
+```bash
+# Unit tests only (fast)
+docker compose exec app /app/test-docker.sh -m unit
+
+# Integration tests
+docker compose exec app /app/test-docker.sh -m integration
+
+# Performance tests
+docker compose exec app /app/test-docker.sh -m performance
+
+# Exclude slow tests
+docker compose exec app /app/test-docker.sh -m "not slow"
+```
+
+## Mock Infrastructure Patterns
+
+### External Service Mocking
+
+#### OpenAI API Mocking
+```python
+class MockOpenAIClient:
+    """Mock OpenAI client for consistent testing."""
+    
+    def __init__(self):
+        self.call_count = 0
+        self.call_history = []
+    
+    def create_chat_completion(self, messages, model="gpt-3.5-turbo", **kwargs):
+        self.call_count += 1
+        self.call_history.append({'messages': messages, 'model': model})
+        
+        if 'summarize' in str(messages).lower():
+            return self._create_summary_response()
+        return self._create_checklist_response()
+
+# Context manager for easy mocking
+@contextmanager
+def mock_openai_client():
+    with patch('openai.OpenAI') as mock:
+        mock_client = MockOpenAIClient()
+        mock.return_value.chat.completions.create = mock_client.create_chat_completion
+        yield mock_client
+```
+
+#### Redis and Celery Mocking
+```python
+class MockRedisClient:
+    def __init__(self):
+        self.data = {}
+        self.call_count = 0
+    
+    def ping(self): return True
+    def set(self, key, value, ex=None): 
+        self.data[key] = value
+        return True
+    def get(self, key): 
+        return self.data.get(key)
+
+@contextmanager
+def mock_celery_task(task_id=None, result=None):
+    mock_task = MockCeleryTask(task_id, result)
+    with patch('jobs.tasks.process_job') as mock_process:
+        mock_process.delay = mock_task.delay
+        yield mock_task
+```
+
+## Test Data Factory Patterns
+
+### Using factory_boy for Test Data
+```python
+import factory
+from datetime import datetime, timezone
+
+class JobDataFactory(factory.Factory):
+    """Factory for creating job data dictionaries."""
+    
+    class Meta:
+        model = dict
+    
+    guidelines = factory.Faker('text', max_nb_chars=1000)
+    title = factory.Faker('sentence', nb_words=3)
+    description = factory.Faker('text', max_nb_chars=200)
+
+# Model factory (when Job model is implemented)
+class JobFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = 'jobs.Job'
+    
+    event_id = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    status = factory.Iterator(['PENDING', 'PROCESSING', 'COMPLETED'])
+    input_data = factory.SubFactory(JobDataFactory)
+    created_at = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+```
+
+## Fixture Patterns
+
+### Common Fixtures (conftest.py)
+```python
+@pytest.fixture
+def api_client():
+    """DRF API client for testing endpoints."""
+    from rest_framework.test import APIClient
+    return APIClient()
+
+@pytest.fixture
+def sample_job_data():
+    """Sample job data for testing."""
+    return JobDataFactory()
+
+@pytest.fixture
+def performance_timer():
+    """Timer for performance testing."""
+    class Timer:
+        def start(self): self.start_time = time.time()
+        def stop(self): self.end_time = time.time()
+        @property
+        def elapsed_ms(self): return (self.end_time - self.start_time) * 1000
+    return Timer()
+
+@pytest.fixture
+def mock_openai_responses():
+    """Mock OpenAI API responses."""
+    return {
+        'summary': {
+            'choices': [{'message': {'content': 'Summary: Test guidelines.'}}]
+        },
+        'checklist': {
+            'choices': [{'message': {'content': 'Checklist:\n□ Item 1\n□ Item 2'}}]
+        }
+    }
+```
+
+## TDD Test Patterns
+
+### Model Testing Pattern
+```python
+class TestJobModel:
+    """Test Job model functionality."""
+    
+    def test_job_creation_with_required_fields(self, db):
+        """Test job creation with minimum required fields."""
+        job_data = {'guidelines': 'Test guidelines'}
+        job = Job.objects.create(input_data=job_data)
+        
+        assert job.event_id is not None
+        assert job.status == JobStatus.PENDING
+        assert job.input_data == job_data
+        assert job.created_at is not None
+    
+    def test_job_status_transitions(self, db):
+        """Test valid job status transitions."""
+        job = Job.objects.create(input_data={'guidelines': 'test'})
+        
+        # PENDING → PROCESSING
+        job.status = JobStatus.PROCESSING
+        job.save()
+        assert job.status == JobStatus.PROCESSING
+        
+        # PROCESSING → COMPLETED
+        job.status = JobStatus.COMPLETED
+        job.save()
+        assert job.status == JobStatus.COMPLETED
+```
+
+### API Testing Pattern
+```python
+class TestJobAPI:
+    """Test job API endpoints."""
+    
+    @pytest.mark.api
+    def test_create_job_success(self, api_client, sample_job_data):
+        """Test successful job creation."""
+        response = api_client.post('/jobs/', sample_job_data)
+        
+        assert response.status_code == 201
+        assert 'event_id' in response.data
+        assert response.data['status'] == 'PENDING'
+    
+    @pytest.mark.api
+    def test_create_job_validation_error(self, api_client):
+        """Test job creation with invalid data."""
+        invalid_data = {'guidelines': ''}  # Too short
+        response = api_client.post('/jobs/', invalid_data)
+        
+        assert response.status_code == 400
+        assert 'error' in response.data
+        assert response.data['error']['code'] == 'VALIDATION_ERROR'
+```
+
+### Performance Testing Pattern
+```python
+class TestPerformance:
+    """Test performance requirements."""
+    
+    @pytest.mark.performance
+    def test_job_creation_under_200ms(self, api_client, sample_job_data, performance_timer):
+        """Test job creation meets <200ms requirement."""
+        performance_timer.start()
+        response = api_client.post('/jobs/', sample_job_data)
+        performance_timer.stop()
+        
+        assert response.status_code == 201
+        assert performance_timer.elapsed_ms < 200, f"Job creation took {performance_timer.elapsed_ms}ms"
+    
+    @pytest.mark.performance
+    def test_concurrent_job_creation(self, api_client, sample_job_data):
+        """Test concurrent job creation doesn't cause conflicts."""
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(api_client.post, '/jobs/', sample_job_data)
+                for _ in range(5)
+            ]
+            responses = [f.result() for f in futures]
+        
+        # All should succeed
+        assert all(r.status_code == 201 for r in responses)
+        
+        # All should have unique event_ids
+        event_ids = [r.data['event_id'] for r in responses]
+        assert len(set(event_ids)) == len(event_ids)
+```
+
+### Celery Task Testing Pattern
+```python
+class TestCeleryTasks:
+    """Test Celery task functionality."""
+    
+    @pytest.mark.celery
+    def test_process_job_task_with_mock_openai(self, db, mock_openai_responses):
+        """Test job processing task with mocked OpenAI."""
+        with mock_openai_client() as mock_client:
+            job = Job.objects.create(input_data={'guidelines': 'test'})
+            
+            # Run task (synchronous in test mode)
+            result = process_job.delay(job.id, 'test guidelines')
+            
+            # Verify task completed
+            assert result.status == 'SUCCESS'
+            assert mock_client.call_count == 2  # Summary + checklist calls
+            
+            # Verify job was updated
+            job.refresh_from_db()
+            assert job.status == JobStatus.COMPLETED
+            assert job.result is not None
+```
+
+## Coverage Requirements
+
+### Coverage Targets
+- **Overall Coverage**: ≥70%
+- **Model Coverage**: ≥90%
+- **View Coverage**: ≥85%
+- **Task Coverage**: ≥80%
+
+### Coverage Configuration (.coveragerc)
+```ini
+[run]
+source = guideline_ingestion
+omit = 
+    */migrations/*
+    */tests/*
+    */venv/*
+    manage.py
+    */settings/*
+branch = True
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+show_missing = True
+```
+
+### Coverage Reporting
+```bash
+# Generate HTML coverage report
+docker compose exec app /app/test-docker.sh --cov-report=html
+
+# View coverage in browser
+open htmlcov/index.html
+
+# Terminal coverage report
+docker compose exec app /app/test-docker.sh --cov-report=term-missing
+```
+
+## Integration Testing Standards
+
+### Database Integration
+```python
+@pytest.mark.integration
+def test_job_creation_with_database(self, db):
+    """Test job creation integrates properly with database."""
+    job_data = {'guidelines': 'Integration test guidelines'}
+    job = Job.objects.create(input_data=job_data)
+    
+    # Verify database persistence
+    retrieved_job = Job.objects.get(event_id=job.event_id)
+    assert retrieved_job.input_data == job_data
+```
+
+### End-to-End Testing
+```python
+@pytest.mark.integration
+def test_complete_job_processing_flow(self, api_client, sample_job_data):
+    """Test complete job processing from API to completion."""
+    with mock_openai_client():
+        # 1. Create job via API
+        response = api_client.post('/jobs/', sample_job_data)
+        assert response.status_code == 201
+        event_id = response.data['event_id']
+        
+        # 2. Job should be processed (eager mode in tests)
+        # 3. Check job status
+        status_response = api_client.get(f'/jobs/{event_id}/')
+        assert status_response.status_code == 200
+        assert status_response.data['status'] == 'COMPLETED'
+```
+
+## Test Execution Commands
+
+### Local Development Testing
+```bash
+# Run all tests with coverage
+docker compose exec app /app/test-docker.sh
+
+# Run specific test file
+docker compose exec app /app/test-docker.sh jobs/tests/test_models.py
+
+# Run with specific markers
+docker compose exec app /app/test-docker.sh -m "unit and not slow"
+
+# Run with coverage and stop on first failure
+docker compose exec app /app/test-docker.sh --maxfail=1 --cov-report=term
+```
+
+### CI/CD Pipeline Testing
+```bash
+# Full test suite with coverage requirements
+docker compose exec app /app/test-docker.sh --cov-fail-under=70
+
+# Performance test validation
+docker compose exec app /app/test-docker.sh -m performance --tb=short
+
+# Integration test validation
+docker compose exec app /app/test-docker.sh -m integration --maxfail=5
+```

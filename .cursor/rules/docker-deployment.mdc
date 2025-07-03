@@ -305,3 +305,68 @@ services:
     "timestamp": "2025-07-03T08:04:38.322540+00:00"
 }
 ```
+
+## Docker-Based Testing Infrastructure
+
+### Test Execution Environment
+All tests MUST run in Docker containers to ensure environment parity and reproducible results.
+
+### Test Script Pattern
+```bash
+#!/bin/bash
+# test-docker.sh - Standardized test runner for Docker environment
+set -e
+
+# Set environment variables for testing
+export PYTHONPATH=/app/guideline_ingestion:/app
+export DJANGO_SETTINGS_MODULE=config.test_settings
+
+# Change to app directory
+cd /app
+
+# Run tests with proper configuration
+python -m pytest "$@"
+```
+
+### Test Database Configuration
+```yaml
+# Test-specific database setup in docker-compose
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: guideline_ingestion
+      POSTGRES_TEST_DB: test_guideline_ingestion  # Used for testing isolation
+```
+
+### Running Tests in Docker
+```bash
+# Basic test execution
+docker compose exec app /app/test-docker.sh
+
+# Coverage reporting
+docker compose exec app /app/test-docker.sh --cov-report=html
+
+# Performance tests
+docker compose exec app /app/test-docker.sh -m performance
+
+# Integration tests
+docker compose exec app /app/test-docker.sh -m integration
+
+# Run specific test file
+docker compose exec app /app/test-docker.sh guideline_ingestion/jobs/tests/test_models.py
+```
+
+### Test Environment Variables
+```env
+# Additional .env variables for testing
+POSTGRES_TEST_DB=test_guideline_ingestion
+DJANGO_SETTINGS_MODULE=config.test_settings
+CELERY_TASK_ALWAYS_EAGER=True
+OPENAI_API_KEY=test-api-key
+```
+
+### Coverage Reporting in Docker
+Tests generate coverage reports accessible via mounted volumes:
+- HTML reports: `./htmlcov/index.html`
+- XML reports: `./coverage.xml`
+- Terminal output with missing lines
