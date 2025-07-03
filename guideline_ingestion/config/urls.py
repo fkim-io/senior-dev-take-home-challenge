@@ -15,7 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, register_converter
 from django.http import JsonResponse
 from django.db import connections
 from django.utils import timezone
@@ -25,6 +25,10 @@ from drf_spectacular.openapi import OpenApiTypes
 from rest_framework.decorators import api_view
 import redis
 from django.conf import settings
+
+# Register custom converters
+from guideline_ingestion.jobs.converters import CaseInsensitiveUUIDConverter
+register_converter(CaseInsensitiveUUIDConverter, 'flexible_uuid')
 
 @extend_schema(
     operation_id="health_check",

@@ -136,9 +136,10 @@ class JobCreateSerializer(serializers.Serializer):
         style={'type': 'textarea', 'rows': 5}
     )
     
-    callback_url = serializers.URLField(
+    callback_url = serializers.CharField(
         required=False,
         allow_blank=True,
+        allow_null=True,
         help_text=(
             "Optional HTTPS callback URL for job completion notification. "
             "Must use HTTPS protocol for security. "
@@ -175,11 +176,39 @@ class JobCreateSerializer(serializers.Serializer):
         return value.strip()
     
     def validate_callback_url(self, value: str) -> str:
-        """Validate callback URL requires HTTPS."""
-        if value and not value.startswith('https://'):
-            raise serializers.ValidationError("Callback URL must use HTTPS protocol")
+        """Validate callback URL requires HTTPS and proper format."""
+        if value is not None and value != '':
+            # Reject whitespace-only URLs
+            if not value.strip():
+                raise serializers.ValidationError("Callback URL cannot be only whitespace")
+            
+            # Validate URL format
+            from django.core.validators import URLValidator
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            
+            # Require HTTPS for non-empty URLs
+            if not value.startswith('https://'):
+                raise serializers.ValidationError("Callback URL must use HTTPS protocol")
+            
+            # Validate URL format
+            url_validator = URLValidator()
+            try:
+                url_validator(value)
+            except DjangoValidationError:
+                raise serializers.ValidationError("Enter a valid URL")
         
         return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        # Handle whitespace-only callback URL that gets past field validation
+        callback_url = attrs.get('callback_url')
+        if callback_url is not None and callback_url != '' and not callback_url.strip():
+            raise serializers.ValidationError({
+                'callback_url': ['Callback URL cannot be only whitespace']
+            })
+        
+        return attrs
     
     def validate_metadata(self, value: Dict[str, Any]) -> Dict[str, Any]:
         """Validate metadata size and key constraints."""

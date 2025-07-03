@@ -16,12 +16,14 @@ from unittest.mock import patch, MagicMock, Mock
 
 import pytest
 from django.test import TestCase
+from rest_framework.test import APITestCase
 from openai import OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 
 from guideline_ingestion.jobs.gpt_client import (
     GPTClient,
+    RateLimiter,
     GPTClientError,
     GPTRateLimitError,
     GPTValidationError,
@@ -498,3 +500,484 @@ class TestResponseValidation(TestCase):
         for summary in invalid_summaries:
             with self.assertRaises(SummarizationError):
                 self.client._validate_summary(summary)
+
+
+class TestRateLimiterImplementation(TestCase):
+    """Test comprehensive rate limiter functionality."""
+    
+    def setUp(self):
+        """Set up test rate limiter."""
+        from guideline_ingestion.jobs.gpt_client import RateLimiter
+        self.rate_limiter = RateLimiter(max_requests=3, time_window=60)
+    
+    def test_rate_limiter_can_make_request_initial(self):
+        """Test rate limiter allows initial requests."""
+        self.assertTrue(self.rate_limiter.can_make_request())
+    
+    def test_rate_limiter_tracks_requests(self):
+        """Test rate limiter properly tracks requests."""
+        # Make requests up to the limit
+        for i in range(3):
+            self.assertTrue(self.rate_limiter.can_make_request())
+            self.rate_limiter.record_request()
+        
+        # Should be at limit now
+        self.assertFalse(self.rate_limiter.can_make_request())
+    
+    def test_rate_limiter_wait_time_calculation(self):
+        """Test rate limiter calculates correct wait time."""
+        # Fill up the rate limiter
+        for i in range(3):
+            self.rate_limiter.record_request()
+        
+        # Should need to wait
+        wait_time = self.rate_limiter.wait_time()
+        self.assertGreater(wait_time, 0)
+        self.assertLessEqual(wait_time, 60)  # Within time window
+    
+    def test_rate_limiter_wait_time_empty(self):
+        """Test rate limiter returns zero wait time when empty."""
+        wait_time = self.rate_limiter.wait_time()
+        self.assertEqual(wait_time, 0.0)
+    
+    def test_rate_limiter_request_cleanup(self):
+        """Test rate limiter cleans up old requests."""
+        from datetime import datetime, timedelta
+        
+        # Manually add old request
+        old_time = datetime.now() - timedelta(seconds=70)  # Older than time window
+        self.rate_limiter.requests.append(old_time)
+        
+        # Should be cleaned up when checking
+        self.assertTrue(self.rate_limiter.can_make_request())
+        self.assertEqual(len(self.rate_limiter.requests), 0)
+
+
+class TestGPTClientAPICallErrorHandling(TestCase):
+    """Test GPT client API call error handling scenarios."""
+    
+    def setUp(self):
+        """Set up test client."""
+        self.client = GPTClient(api_key="test-api-key")
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_openai_rate_limit_error(self, mock_openai_class):
+        """Test handling of OpenAI rate limit error."""
+        from openai import RateLimitError
+        
+        # Mock OpenAI client to raise rate limit error
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        # Create a mock response object with request attribute
+        mock_response = MagicMock()
+        mock_response.request = MagicMock()
+        
+        mock_client.chat.completions.create.side_effect = RateLimitError(
+            message="Rate limit exceeded",
+            response=mock_response,
+            body=None
+        )
+        
+        # Replace the client's openai_client
+        self.client.openai_client = mock_client
+        
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(GPTRateLimitError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Rate limit exceeded", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_openai_api_error(self, mock_openai_class):
+        """Test handling of OpenAI API error."""
+        from openai import APIError
+        
+        # Mock OpenAI client to raise API error
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = APIError(
+            message="API Error occurred",
+            request=None,
+            body=None
+        )
+        
+        # Replace the client's openai_client
+        self.client.openai_client = mock_client
+        
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Failed to call OpenAI API", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_unexpected_error(self, mock_openai_class):
+        """Test handling of unexpected errors."""
+        # Mock OpenAI client to raise unexpected error
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = ConnectionError("Network error")
+        
+        # Replace the client's openai_client
+        self.client.openai_client = mock_client
+        
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Unexpected error", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_empty_response_choices(self, mock_openai_class):
+        """Test handling of empty response choices."""
+        # Mock OpenAI client to return empty choices
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        # Replace the client's openai_client
+        self.client.openai_client = mock_client
+        
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Empty response from OpenAI API", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_empty_message_content(self, mock_openai_class):
+        """Test handling of empty message content."""
+        # Mock OpenAI client to return empty content
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        mock_choice = MagicMock()
+        mock_choice.message.content = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        # Replace the client's openai_client
+        self.client.openai_client = mock_client
+        
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Empty response from OpenAI API", str(context.exception))
+    
+    def test_check_rate_limit_enforcement(self):
+        """Test rate limit check and enforcement."""
+        # Mock rate limiter to indicate limit exceeded
+        with patch.object(self.client.rate_limiter, 'can_make_request', return_value=False):
+            with patch.object(self.client.rate_limiter, 'wait_time', return_value=30.5):
+                with self.assertRaises(GPTRateLimitError) as context:
+                    self.client._check_rate_limit()
+                
+                self.assertIn("Rate limit exceeded", str(context.exception))
+                self.assertIn("30.50 seconds", str(context.exception))
+    
+    def test_check_rate_limit_records_request(self):
+        """Test rate limit check records request when allowed."""
+        with patch.object(self.client.rate_limiter, 'can_make_request', return_value=True):
+            with patch.object(self.client.rate_limiter, 'record_request') as mock_record:
+                self.client._check_rate_limit()
+                mock_record.assert_called_once()
+
+
+class TestChecklistValidationEdgeCases(TestCase):
+    """Test checklist validation edge cases."""
+    
+    def setUp(self):
+        """Set up test client."""
+        self.client = GPTClient(api_key="test-api-key")
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_non_list_response(self, mock_api_call):
+        """Test checklist generation with non-list JSON response."""
+        mock_api_call.return_value = '{"not": "a list"}'
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist("Test summary")
+        
+        self.assertIn("Checklist response must be a JSON array", str(context.exception))
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_empty_list_response(self, mock_api_call):
+        """Test checklist generation with empty list response."""
+        mock_api_call.return_value = '[]'
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist("Test summary")
+        
+        self.assertIn("Empty checklist generated", str(context.exception))
+    
+    def test_validate_checklist_item_empty_strings(self):
+        """Test checklist item validation with empty strings."""
+        invalid_items = [
+            {"id": 1, "title": "", "description": "Test", "priority": "high", "category": "test"},
+            {"id": 1, "title": "Test", "description": "", "priority": "high", "category": "test"},
+            {"id": 1, "title": "Test", "description": "Test", "priority": "high", "category": ""},
+            {"id": 1, "title": "   ", "description": "Test", "priority": "high", "category": "test"},
+        ]
+        
+        for item in invalid_items:
+            with self.assertRaises(ChecklistGenerationError):
+                self.client._validate_checklist_item(item)
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_item_validation_error(self, mock_api_call):
+        """Test checklist generation with invalid item structure."""
+        invalid_checklist = [
+            {"id": 1, "title": "Valid item", "description": "Test", "priority": "high", "category": "test"},
+            {"id": "invalid", "title": "Invalid item", "description": "Test", "priority": "high", "category": "test"}
+        ]
+        
+        mock_api_call.return_value = json.dumps(invalid_checklist)
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist("Test summary")
+        
+        self.assertIn("Invalid checklist item at index 1", str(context.exception))
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_rate_limit_passthrough(self, mock_api_call):
+        """Test checklist generation passes through rate limit errors."""
+        mock_api_call.side_effect = GPTRateLimitError("Rate limit exceeded")
+        
+        with self.assertRaises(GPTRateLimitError):
+            self.client.generate_checklist("Test summary")
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_validation_error_passthrough(self, mock_api_call):
+        """Test checklist generation passes through validation errors."""
+        mock_api_call.side_effect = GPTValidationError("Validation failed")
+        
+        with self.assertRaises(GPTValidationError):
+            self.client.generate_checklist("Test summary")
+    
+    @patch.object(GPTClient, '_make_api_call')
+    def test_generate_checklist_unexpected_error_wrapped(self, mock_api_call):
+        """Test checklist generation wraps unexpected errors."""
+        mock_api_call.side_effect = RuntimeError("Unexpected error")
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist("Test summary")
+        
+        self.assertIn("Failed to generate checklist", str(context.exception))
+
+
+class TestRateLimiterFunctionality(APITestCase):
+    """Test rate limiter functionality comprehensively."""
+    
+    def test_rate_limiter_record_request(self):
+        """Test recording requests updates internal state."""
+        limiter = RateLimiter(max_requests=5, time_window=60)
+        
+        # Initially no requests
+        self.assertEqual(len(limiter.requests), 0)
+        
+        # Record a request
+        limiter.record_request()
+        self.assertEqual(len(limiter.requests), 1)
+        
+        # Record multiple requests
+        for _ in range(3):
+            limiter.record_request()
+        self.assertEqual(len(limiter.requests), 4)
+    
+    def test_rate_limiter_wait_time_no_requests(self):
+        """Test wait time calculation with no requests."""
+        limiter = RateLimiter(max_requests=5, time_window=60)
+        
+        # No requests should return 0 wait time
+        self.assertEqual(limiter.wait_time(), 0.0)
+    
+    def test_rate_limiter_wait_time_with_requests(self):
+        """Test wait time calculation with existing requests."""
+        limiter = RateLimiter(max_requests=2, time_window=60)
+        
+        # Fill up the rate limit
+        limiter.record_request()
+        limiter.record_request()
+        
+        # Should calculate wait time based on oldest request
+        wait_time = limiter.wait_time()
+        self.assertGreater(wait_time, 0)
+        self.assertLessEqual(wait_time, 60)
+    
+    def test_rate_limiter_request_cleanup(self):
+        """Test old requests are cleaned up properly."""
+        limiter = RateLimiter(max_requests=5, time_window=1)  # 1 second window
+        
+        # Record requests
+        limiter.record_request()
+        limiter.record_request()
+        self.assertEqual(len(limiter.requests), 2)
+        
+        # Wait for requests to age out
+        import time
+        time.sleep(1.1)
+        
+        # Check if we can make request (should clean up old ones)
+        can_make = limiter.can_make_request()
+        self.assertTrue(can_make)
+        self.assertEqual(len(limiter.requests), 0)  # Old requests cleaned up
+    
+    def test_rate_limiter_max_requests_enforcement(self):
+        """Test rate limiter properly enforces max requests."""
+        limiter = RateLimiter(max_requests=3, time_window=60)
+        
+        # Should allow requests up to limit
+        for i in range(3):
+            self.assertTrue(limiter.can_make_request())
+            limiter.record_request()
+        
+        # Should block additional requests
+        self.assertFalse(limiter.can_make_request())
+
+
+class TestGPTClientAdvancedErrorHandling(APITestCase):
+    """Test advanced error handling scenarios in GPT client."""
+    
+    def setUp(self):
+        """Set up test client with mock API key."""
+        self.api_key = "test-api-key"
+        self.client = GPTClient(api_key=self.api_key)
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_timeout_error(self, mock_openai_class):
+        """Test handling of API timeout errors."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = TimeoutError("Request timeout")
+        
+        self.client.openai_client = mock_client
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Unexpected error", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_api_call_invalid_response_structure(self, mock_openai_class):
+        """Test handling of invalid response structure."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        # Mock response with no message attribute
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message = None
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        self.client.openai_client = mock_client
+        messages = [{"role": "user", "content": "test"}]
+        
+        with self.assertRaises(SummarizationError) as context:
+            self.client._make_api_call(messages)
+        
+        self.assertIn("Unexpected error", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_checklist_generation_json_decode_error(self, mock_openai_class):
+        """Test handling of invalid JSON in checklist generation."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        # Mock response with invalid JSON
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "This is not valid JSON {invalid}"
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        self.client.openai_client = mock_client
+        
+        summary = "Test summary for checklist generation"
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist(summary)
+        
+        self.assertIn("Invalid JSON response", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_checklist_generation_empty_response(self, mock_openai_class):
+        """Test handling of empty response in checklist generation."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        # Mock empty response
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = ""
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        self.client.openai_client = mock_client
+        
+        summary = "Test summary for checklist generation"
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist(summary)
+        
+        self.assertIn("Empty response", str(context.exception))
+    
+    @patch('guideline_ingestion.jobs.gpt_client.OpenAI')
+    def test_checklist_generation_validation_error_propagation(self, mock_openai_class):
+        """Test that validation errors are properly propagated."""
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        
+        # Mock response with invalid checklist structure
+        invalid_checklist = [
+            {"id": "invalid_id", "title": "Test"}  # Missing fields, invalid types
+        ]
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = json.dumps(invalid_checklist)
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        self.client.openai_client = mock_client
+        
+        summary = "Test summary for checklist generation"
+        
+        with self.assertRaises(ChecklistGenerationError) as context:
+            self.client.generate_checklist(summary)
+        
+        # Should propagate the validation error
+        self.assertIn("invalid checklist item", str(context.exception).lower())
+    
+    def test_process_guidelines_error_propagation(self):
+        """Test that process_guidelines properly propagates errors from sub-methods."""
+        # Mock summarize_guidelines to raise an error
+        with patch.object(self.client, 'summarize_guidelines') as mock_summarize:
+            mock_summarize.side_effect = SummarizationError("Test summarization error")
+            
+            with self.assertRaises(SummarizationError) as context:
+                self.client.process_guidelines("Test guidelines")
+            
+            self.assertIn("Test summarization error", str(context.exception))
+        
+        # Mock generate_checklist to raise an error
+        with patch.object(self.client, 'summarize_guidelines') as mock_summarize, \
+             patch.object(self.client, 'generate_checklist') as mock_checklist:
+            
+            mock_summarize.return_value = "Test summary"
+            mock_checklist.side_effect = ChecklistGenerationError("Test checklist error")
+            
+            with self.assertRaises(ChecklistGenerationError) as context:
+                self.client.process_guidelines("Test guidelines")
+            
+            self.assertIn("Test checklist error", str(context.exception))

@@ -167,8 +167,11 @@ def sample_job_data():
         - Test thoroughly
         - Document properly
         """,
-        'title': 'Test Job',
-        'description': 'Testing job processing functionality'
+        'priority': 'normal',
+        'metadata': {
+            'source': 'test',
+            'version': '1.0'
+        }
     }
 
 

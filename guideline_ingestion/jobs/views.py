@@ -181,6 +181,9 @@ class JobCreateView(APIView):
             # 4. Return success response (<10ms)
             return self._success_response(job)
             
+        except ParseError:
+            # Let DRF handle parse errors
+            raise
         except Exception as e:
             logger.exception(f"Unexpected error in job creation: {str(e)}")
             return self._internal_error_response(request)
