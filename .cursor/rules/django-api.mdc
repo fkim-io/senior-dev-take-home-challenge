@@ -1,111 +1,350 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Django REST Framework Patterns
 
 ## API Endpoint Requirements
 
 ### POST /jobs Endpoint
-```python
-# Expected behavior:
-# 1. Accept guidelines data in request body
-# 2. Generate unique event_id (UUID)
-# 3. Create Job record with PENDING status
-# 4. Queue Celery task asynchronously
-# 5. Return event_id in <200ms
-# 6. Handle validation errors gracefully
+# Django API Design Rules - Guideline Ingestion API
 
+## Overview
+These rules define the API design patterns established for the guideline ingestion system. All API development must follow these standards for consistency.
+
+## Response Structure Standards
+
+### Success Response Format
+All successful responses MUST use this structure:
+```python
+{
+    "success": true,
+    "data": {
+        # Actual response data
+    },
+    "message": "Optional success message"
+}
+```
+
+### Error Response Format
+All error responses MUST use this structure:
+```python
+{
+    "success": false,
+    "error": {
+        "code": "ERROR_CODE",
+        "message": "Human-readable error description",
+        "details": "Additional context or nested error details",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "request_id": "req_550e8400e29b41d4a716446655440000"
+    },
+    "data": null
+}
+```
+
+## Standard Error Codes
+
+### Client Errors (4xx)
+- `VALIDATION_ERROR` (400): Request validation failed
+- `AUTH_ERROR` (401): Authentication required
+- `JOB_NOT_FOUND` (404): Job with event_id not found
+- `RATE_LIMIT_EXCEEDED` (429): Rate limit exceeded
+
+### Server Errors (5xx)
+- `INTERNAL_ERROR` (500): Unexpected server error
+- `SERVICE_OVERLOADED` (503): Service temporarily unavailable
+
+## API Endpoints
+
+### POST /jobs Endpoint
+**Performance Requirement**: <200ms response time (95th percentile)
+
+```python
 class JobCreateView(APIView):
     def post(self, request):
-        # Implementation must be <200ms
-        pass
+        # 1. Validate request (<10ms)
+        serializer = JobCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                "success": False,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": {"field_errors": serializer.errors},
+                    "timestamp": timezone.now().isoformat(),
+                    "request_id": request.META.get('REQUEST_ID')
+                },
+                "data": None
+            }, status=400)
+        
+        # 2. Create job record (<50ms)
+        job = Job.objects.create(
+            status='PENDING',
+            input_data=serializer.validated_data
+        )
+        
+        # 3. Queue async task (<20ms)
+        process_guideline_job.delay(job.id, serializer.validated_data['guidelines'])
+        
+        # 4. Return response (<10ms)
+        return Response({
+            "success": True,
+            "data": {
+                "event_id": job.event_id,
+                "status": "PENDING",
+                "created_at": job.created_at.isoformat(),
+                "estimated_completion": (job.created_at + timedelta(minutes=2)).isoformat()
+            },
+            "message": "Job submitted successfully"
+        }, status=201)
 ```
 
 ### GET /jobs/{event_id} Endpoint
-```python
-# Expected behavior:
-# 1. Validate event_id format (UUID)
-# 2. Return job status and results if available
-# 3. Handle not found cases gracefully
-# 4. Support different status responses
+**Performance Requirement**: <100ms response time (95th percentile)
 
+```python
 class JobRetrieveView(APIView):
     def get(self, request, event_id):
-        # Return status and results
-        pass
+        try:
+            # Optimized query (<30ms)
+            job = Job.objects.get(event_id=event_id)
+        except Job.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": {
+                    "code": "JOB_NOT_FOUND",
+                    "message": "Job with specified event_id not found",
+                    "details": "Verify the event_id is correct and the job exists",
+                    "timestamp": timezone.now().isoformat(),
+                    "request_id": request.META.get('REQUEST_ID')
+                },
+                "data": None
+            }, status=404)
+        
+        # Status-specific response data
+        data = {
+            "event_id": job.event_id,
+            "status": job.status,
+            "created_at": job.created_at.isoformat(),
+        }
+        
+        # Add status-specific fields
+        if job.status == 'COMPLETED':
+            data.update({
+                "updated_at": job.updated_at.isoformat(),
+                "processing_time_seconds": (job.updated_at - job.created_at).total_seconds(),
+                "result": job.result,
+                "metadata": job.metadata
+            })
+        elif job.status == 'FAILED':
+            data.update({
+                "failed_at": job.updated_at.isoformat(),
+                "error": job.error_details
+            })
+        # Add other status-specific fields as needed
+        
+        return Response({
+            "success": True,
+            "data": data
+        })
 ```
 
-## Model Design Patterns
+## Model Design Standards
 
 ### Job Model Requirements
 ```python
 class Job(models.Model):
-    event_id = models.UUIDField(unique=True, default=uuid.uuid4)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
-    input_data = models.JSONField()  # Original guidelines
-    result = models.JSONField(null=True, blank=True)  # GPT outputs
-    created_at = models.DateTimeField(auto_now_add=True)
+    """
+    Core model for async job processing with concurrent-safe status updates.
+    
+    Lifecycle: PENDING → PROCESSING → COMPLETED/FAILED
+    Performance: <200ms creation, indexed lookups, atomic updates
+    """
+    id = models.BigAutoField(primary_key=True)
+    event_id = models.UUIDField(unique=True, default=uuid.uuid4, db_index=True)
+    status = models.CharField(max_length=20, choices=JobStatus.choices, default=JobStatus.PENDING, db_index=True)
+    
+    # Data Storage (PostgreSQL JSONB)
+    input_data = models.JSONField(help_text="Original guidelines and metadata")
+    result = models.JSONField(null=True, blank=True, default=dict, help_text="GPT chain outputs")
+    
+    # Error Handling
+    error_message = models.TextField(null=True, blank=True)
+
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+    ]
+    
+    event_id = models.UUIDField(unique=True, default=uuid.uuid4, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    input_data = models.JSONField()  # Original guidelines + metadata
+    result = models.JSONField(null=True, blank=True)  # GPT chain outputs
+    error_details = models.JSONField(null=True, blank=True)  # Error information
+    metadata = models.JSONField(null=True, blank=True)  # Processing metadata
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Processing Metadata
+    retry_count = models.PositiveSmallIntegerField(default=0)
     
     class Meta:
+        db_table = 'jobs'
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['event_id']),
-            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['event_id'], name='jobs_event_id_idx'),
+            models.Index(fields=['status'], name='jobs_status_idx'), 
+            models.Index(fields=['status', 'created_at'], name='jobs_status_created_idx'),
+            models.Index(fields=['created_at'], name='jobs_created_at_idx'),
         ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(retry_count__gte=0), name='jobs_retry_count_non_negative'),
+        ]
+
+class JobStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing' 
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
 ```
 
-## Serializer Patterns
+## Serializer Standards
 
-### Request/Response Serializers
+### Request Validation Patterns
 ```python
 class JobCreateSerializer(serializers.Serializer):
-    guidelines = serializers.CharField(max_length=10000, required=True)
-    metadata = serializers.JSONField(required=False)
+    guidelines = serializers.CharField(
+        min_length=10,
+        max_length=10000,
+        required=True,
+        help_text="Guideline text to be processed (10-10,000 characters)"
+    )
+    callback_url = serializers.URLField(
+        required=False,
+        help_text="Optional HTTPS URL for job completion notification"
+    )
+    priority = serializers.ChoiceField(
+        choices=['low', 'normal', 'high'],
+        default='normal',
+        required=False
+    )
+    metadata = serializers.JSONField(
+        required=False,
+        help_text="Optional key-value pairs for client tracking"
+    )
     
-    def validate_guidelines(self, value):
-        # Validate guidelines content
-        if len(value.strip()) < 10:
-            raise serializers.ValidationError("Guidelines too short")
+    def validate_callback_url(self, value):
+        if value and not value.startswith('https://'):
+            raise serializers.ValidationError("Callback URL must use HTTPS")
         return value
-
-class JobResponseSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Job
-        fields = ['event_id', 'status', 'result', 'created_at']
+    
+    def validate_metadata(self, value):
+        if value and len(value) > 10:
+            raise serializers.ValidationError("Maximum 10 metadata key-value pairs allowed")
+        return value
 ```
 
-## Error Handling Standards
+## Job Status Flow
 
-### Consistent Error Responses
+### Status Transitions
+Jobs MUST follow this status flow:
+```
+PENDING → PROCESSING → COMPLETED
+   ↓           ↓           ↑
+   └─────── FAILED ────────┘
+```
+
+## Concurrent Access Patterns
+
+### Atomic Status Updates
 ```python
-# Standard error format:
-{
-    "error": {
-        "code": "VALIDATION_ERROR",
-        "message": "Invalid input data",
-        "details": {"field": ["error message"]}
-    }
-}
+# Safe concurrent status updates using database-level atomicity
+def update_job_status(job_id: int, new_status: str, **updates) -> bool:
+    """Atomically update job status with optimistic concurrency control."""
+    with transaction.atomic():
+        job = Job.objects.select_for_update().get(id=job_id)
+        
+        # Validate status transition
+        if not is_valid_status_transition(job.status, new_status):
+            raise ValueError(f"Invalid status transition: {job.status} → {new_status}")
+        
+        # Update with lifecycle timestamps
+        updated_fields = {'status': new_status, 'updated_at': timezone.now(), **updates}
+        if new_status == JobStatus.PROCESSING:
+            updated_fields['started_at'] = timezone.now()
+        elif new_status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+            updated_fields['completed_at'] = timezone.now()
+        
+        Job.objects.filter(id=job_id).update(**updated_fields)
+        return True
+```
 
-# Status codes:
-# 200: Success
-# 201: Created
-# 400: Bad Request (validation errors)
-# 404: Not Found
-# 422: Unprocessable Entity
-# 500: Internal Server Error
+### Worker Coordination
+```python 
+# Prevent multiple workers from processing the same job
+def claim_job_for_processing(job_id: int, worker_id: str) -> bool:
+    """Atomically claim a job for processing by a specific worker."""
+    try:
+        with transaction.atomic():
+            updated = Job.objects.filter(
+                id=job_id, 
+                status=JobStatus.PENDING
+            ).update(
+                status=JobStatus.PROCESSING,
+                started_at=timezone.now()
+            )
+            return updated > 0
+    except Exception:
+        return False
 ```
 
 ## Performance Optimizations
+### Status-Specific Response Data
+- **PENDING**: Include `estimated_completion`, `queue_position`
+- **PROCESSING**: Include `started_at`, `current_step`, `progress_percentage`
+- **COMPLETED**: Include `updated_at`, `processing_time_seconds`, `result`, `metadata`
+- **FAILED**: Include `failed_at`, `error` details
+
+## Performance Optimization Patterns
 
 ### Database Query Optimization
-- Use `select_related()` and `prefetch_related()` for relationships
-- Index frequently queried fields (event_id, status)
-- Use `bulk_create()` for multiple records
-- Implement database connection pooling
+```python
+# Required indexes for performance
+class Meta:
+    indexes = [
+        models.Index(fields=['event_id']),  # Primary lookup
+        models.Index(fields=['status']),    # Status filtering
+        models.Index(fields=['created_at']), # Time-based queries
+    ]
 
-### Response Time Optimization
-- Minimize database queries in endpoints
-- Use asynchronous task queuing immediately
-- Implement proper caching strategies
-- Use database transactions judiciously
+# Optimized queries
+job = Job.objects.get(event_id=event_id)  # Uses index
+jobs = Job.objects.filter(status='PENDING').order_by('created_at')  # Uses composite index
+```
+
+```python
+def test_job_creation_performance():
+    """Test job creation meets <200ms requirement."""
+    start_time = time.time()
+    job = Job.objects.create(input_data={'guidelines': 'test'})
+    creation_time = (time.time() - start_time) * 1000
+    assert creation_time < 200, f"Job creation took {creation_time}ms, exceeds 200ms limit"
+
+def test_concurrent_status_updates():
+    """Test concurrent status updates don't cause data corruption."""
+    job = Job.objects.create(input_data={'guidelines': 'test'})
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(claim_job_for_processing, job.id, f'worker_{i}') for i in range(10)]
+        results = [f.result() for f in futures]
+    
+    assert sum(results) == 1, "Multiple workers claimed the same job"
+```
 
 ## DRF Best Practices
 - Use class-based views for consistency
@@ -114,11 +353,96 @@ class JobResponseSerializer(serializers.ModelSerializer):
 - Leverage DRF's built-in pagination
 - Use viewsets for CRUD operations when appropriate
 - Implement proper logging for debugging
+### Response Time Requirements
+- **POST /jobs**: <200ms total (validation: <10ms, DB write: <50ms, queue: <20ms)
+- **GET /jobs/{event_id}**: <100ms total (DB query: <30ms, serialization: <20ms)
+
+## Authentication & Security
+
+### API Key Authentication
+```python
+class APIKeyAuthentication(BaseAuthentication):
+    def authenticate(self, request):
+        auth_header = request.META.get('HTTP_AUTHORIZATION')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return None
+        # Validate API key
+        return (user, token)
+```
+
+### Rate Limiting
+- 100 requests/minute per API key
+- Return `RATE_LIMIT_EXCEEDED` error with `retry_after` field
+
+## OpenAPI Documentation Standards
+
+### Required Documentation Elements
+- Comprehensive request/response examples
+- Detailed error response examples for each endpoint
+- Parameter validation rules and constraints
+- Performance characteristics (<200ms, <100ms)
+- Status-specific response variations
+
+### Schema Naming Conventions
+- `JobSubmissionRequest` for POST request schema
+- `JobSubmissionResponse` for POST response schema
+- `JobStatusResponse` for GET response schema
+- `ErrorResponse` for all error responses
 
 ## URL Patterns
 ```python
 urlpatterns = [
-    path('jobs/', JobCreateView.as_view(), name='job-create'),
-    path('jobs/<uuid:event_id>/', JobRetrieveView.as_view(), name='job-detail'),
+    path('v1/jobs/', JobCreateView.as_view(), name='job-create'),
+    path('v1/jobs/<uuid:event_id>/', JobRetrieveView.as_view(), name='job-detail'),
+    path('v1/health/', HealthCheckView.as_view(), name='health-check'),
 ]
 ```
+## Validation Rules Reference
+
+### Guidelines Field
+- Required: Yes
+- Min length: 10 characters
+- Max length: 10,000 characters
+- Type: Plain text string
+
+### Callback URL Field
+- Required: No
+- Format: Valid HTTPS URL only
+- Validation: Must start with `https://`
+
+### Priority Field
+- Required: No
+- Default: 'normal'
+- Choices: ['low', 'normal', 'high']
+
+### Metadata Field
+- Required: No
+- Type: JSON object
+- Max properties: 10
+- Total size limit: <1KB
+
+## Error Handling Best Practices
+
+### Validation Error Details
+```python
+{
+    "success": false,
+    "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Request validation failed",
+        "details": {
+            "field_errors": {
+                "guidelines": ["This field is required"],
+                "callback_url": ["Invalid URL format"]
+            }
+        }
+    }
+}
+```
+
+### Server Error Handling
+- Always include `support_reference` for 5xx errors
+- Never expose internal error details to clients
+- Log full error context for debugging
+- Provide actionable error messages
+
