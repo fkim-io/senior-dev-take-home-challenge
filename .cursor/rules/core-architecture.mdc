@@ -17,9 +17,11 @@ alwaysApply: true
 
 ## Performance Requirements
 - **POST /jobs** endpoint MUST respond in <200ms
-- Support concurrent job processing
+- Support concurrent job processing with atomic operations
 - Efficient database queries with proper indexing
 - Resource-conscious memory usage
+- **Performance Testing**: All job creation operations must be tested to meet <200ms requirement
+- **Concurrent Testing**: All status update operations must be tested for race condition safety
 
 ## Security Standards
 - Never commit `.env` files or API keys
@@ -53,10 +55,13 @@ guideline_ingestion/          # Django project root
 ## Database Design Standards
 - Use UUIDs for event_id to avoid collisions
 - Job status flow: PENDING → PROCESSING → COMPLETED/FAILED
-- Atomic operations for status updates
+- Atomic operations for status updates with `select_for_update()` for concurrent safety
+- Worker coordination patterns to prevent job conflicts in multi-worker environments
 - Proper indexing for performance queries with PostgreSQL 15+ advanced indexing
 - JSON fields for storing GPT results using PostgreSQL native JSONB
 - Connection pooling with psycopg 3.2+ for optimal performance
+- Database constraints for data integrity (check constraints, unique constraints)
+- Lifecycle timestamp tracking (started_at, completed_at) for monitoring and analytics
 
 ## Code Quality Standards
 - Follow PEP 8 with black formatting

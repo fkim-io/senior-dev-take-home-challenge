@@ -155,6 +155,23 @@ class JobRetrieveView(APIView):
 ### Job Model Requirements
 ```python
 class Job(models.Model):
+    """
+    Core model for async job processing with concurrent-safe status updates.
+    
+    Lifecycle: PENDING → PROCESSING → COMPLETED/FAILED
+    Performance: <200ms creation, indexed lookups, atomic updates
+    """
+    id = models.BigAutoField(primary_key=True)
+    event_id = models.UUIDField(unique=True, default=uuid.uuid4, db_index=True)
+    status = models.CharField(max_length=20, choices=JobStatus.choices, default=JobStatus.PENDING, db_index=True)
+    
+    # Data Storage (PostgreSQL JSONB)
+    input_data = models.JSONField(help_text="Original guidelines and metadata")
+    result = models.JSONField(null=True, blank=True, default=dict, help_text="GPT chain outputs")
+    
+    # Error Handling
+    error_message = models.TextField(null=True, blank=True)
+
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
         ('PROCESSING', 'Processing'),
@@ -170,12 +187,30 @@ class Job(models.Model):
     metadata = models.JSONField(null=True, blank=True)  # Processing metadata
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Processing Metadata
+    retry_count = models.PositiveSmallIntegerField(default=0)
     
     class Meta:
+        db_table = 'jobs'
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['event_id']),
-            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['event_id'], name='jobs_event_id_idx'),
+            models.Index(fields=['status'], name='jobs_status_idx'), 
+            models.Index(fields=['status', 'created_at'], name='jobs_status_created_idx'),
+            models.Index(fields=['created_at'], name='jobs_created_at_idx'),
         ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(retry_count__gte=0), name='jobs_retry_count_non_negative'),
+        ]
+
+class JobStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing' 
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
 ```
 
 ## Serializer Standards
@@ -224,6 +259,51 @@ PENDING → PROCESSING → COMPLETED
    └─────── FAILED ────────┘
 ```
 
+## Concurrent Access Patterns
+
+### Atomic Status Updates
+```python
+# Safe concurrent status updates using database-level atomicity
+def update_job_status(job_id: int, new_status: str, **updates) -> bool:
+    """Atomically update job status with optimistic concurrency control."""
+    with transaction.atomic():
+        job = Job.objects.select_for_update().get(id=job_id)
+        
+        # Validate status transition
+        if not is_valid_status_transition(job.status, new_status):
+            raise ValueError(f"Invalid status transition: {job.status} → {new_status}")
+        
+        # Update with lifecycle timestamps
+        updated_fields = {'status': new_status, 'updated_at': timezone.now(), **updates}
+        if new_status == JobStatus.PROCESSING:
+            updated_fields['started_at'] = timezone.now()
+        elif new_status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+            updated_fields['completed_at'] = timezone.now()
+        
+        Job.objects.filter(id=job_id).update(**updated_fields)
+        return True
+```
+
+### Worker Coordination
+```python 
+# Prevent multiple workers from processing the same job
+def claim_job_for_processing(job_id: int, worker_id: str) -> bool:
+    """Atomically claim a job for processing by a specific worker."""
+    try:
+        with transaction.atomic():
+            updated = Job.objects.filter(
+                id=job_id, 
+                status=JobStatus.PENDING
+            ).update(
+                status=JobStatus.PROCESSING,
+                started_at=timezone.now()
+            )
+            return updated > 0
+    except Exception:
+        return False
+```
+
+## Performance Optimizations
 ### Status-Specific Response Data
 - **PENDING**: Include `estimated_completion`, `queue_position`
 - **PROCESSING**: Include `started_at`, `current_step`, `progress_percentage`
@@ -247,6 +327,33 @@ job = Job.objects.get(event_id=event_id)  # Uses index
 jobs = Job.objects.filter(status='PENDING').order_by('created_at')  # Uses composite index
 ```
 
+```python
+def test_job_creation_performance():
+    """Test job creation meets <200ms requirement."""
+    start_time = time.time()
+    job = Job.objects.create(input_data={'guidelines': 'test'})
+    creation_time = (time.time() - start_time) * 1000
+    assert creation_time < 200, f"Job creation took {creation_time}ms, exceeds 200ms limit"
+
+def test_concurrent_status_updates():
+    """Test concurrent status updates don't cause data corruption."""
+    job = Job.objects.create(input_data={'guidelines': 'test'})
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(claim_job_for_processing, job.id, f'worker_{i}') for i in range(10)]
+        results = [f.result() for f in futures]
+    
+    assert sum(results) == 1, "Multiple workers claimed the same job"
+```
+
+## DRF Best Practices
+- Use class-based views for consistency
+- Implement proper permissions and authentication (if required)
+- Use DRF serializers for validation
+- Leverage DRF's built-in pagination
+- Use viewsets for CRUD operations when appropriate
+- Implement proper logging for debugging
+=======
 ### Response Time Requirements
 - **POST /jobs**: <200ms total (validation: <10ms, DB write: <50ms, queue: <20ms)
 - **GET /jobs/{event_id}**: <100ms total (DB query: <30ms, serialization: <20ms)
@@ -291,7 +398,6 @@ urlpatterns = [
     path('v1/health/', HealthCheckView.as_view(), name='health-check'),
 ]
 ```
-
 ## Validation Rules Reference
 
 ### Guidelines Field
