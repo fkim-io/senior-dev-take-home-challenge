@@ -1,0 +1,60 @@
+graph TB
+    %% Client Layer
+    Client[Client Application]
+    
+    %% API Gateway Layer
+    API[Django REST API<br/>Port 8000]
+    
+    %% Database Layer
+    DB[(PostgreSQL 15+<br/>Jobs & Results)]
+    
+    %% Message Queue Layer
+    Redis[(Redis 7.2+<br/>Queue & Cache)]
+    
+    %% Worker Layer
+    Worker1[Celery Worker 1]
+    Worker2[Celery Worker 2]
+    WorkerN[Celery Worker N]
+    
+    %% External Service
+    OpenAI[OpenAI API<br/>GPT Models]
+    
+    %% Job Submission Flow
+    Client -->|POST /jobs<br/>guideline text| API
+    API -->|validate request| API
+    API -->|create job record<br/>status: PENDING| DB
+    API -->|queue job| Redis
+    API -->|return event_id<br/>< 200ms| Client
+    
+    %% Job Processing Flow
+    Redis -->|job pickup| Worker1
+    Redis -->|job pickup| Worker2
+    Redis -->|job pickup| WorkerN
+    
+    Worker1 -->|update status<br/>PROCESSING| DB
+    Worker1 -->|summarize guidelines| OpenAI
+    OpenAI -->|summary response| Worker1
+    Worker1 -->|generate checklist| OpenAI
+    OpenAI -->|checklist response| Worker1
+    Worker1 -->|store results<br/>status: COMPLETED| DB
+    
+    %% Job Status Retrieval
+    Client -->|GET /jobs/{event_id}| API
+    API -->|query job status| DB
+    DB -->|return status & results| API
+    API -->|return response| Client
+    
+    %% Styling
+    classDef clientStyle fill:#e1f5fe
+    classDef apiStyle fill:#fff3e0
+    classDef dbStyle fill:#f3e5f5
+    classDef queueStyle fill:#e8f5e8
+    classDef workerStyle fill:#fff8e1
+    classDef externalStyle fill:#ffebee
+    
+    class Client clientStyle
+    class API apiStyle
+    class DB dbStyle
+    class Redis queueStyle
+    class Worker1,Worker2,WorkerN workerStyle
+    class OpenAI externalStyle 
