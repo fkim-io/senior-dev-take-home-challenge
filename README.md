@@ -6,7 +6,7 @@ Async backend API for guideline processing with two-step GPT chain (summarize â†
 
 ```bash
 # Create .env file with required environment variables first
-cp .env.example .env  # Edit with your OpenAI API key
+cp .env.template .env  # Edit with your OpenAI API key
 
 # One-command bootstrap
 docker compose up --build
